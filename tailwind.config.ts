@@ -38,7 +38,8 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['var(--font-sans)', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['var(--font-sans)', 'var(--font-arabic)', 'system-ui', '-apple-system', 'sans-serif'],
+        arabic: ['var(--font-arabic)', 'var(--font-sans)', 'sans-serif'],
         mono: ['var(--font-mono)', 'monospace'],
       },
     },

@@ -7,6 +7,7 @@ import confetti from 'canvas-confetti';
 import { MoveAnalysis } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
 import { EvalBar } from '@/components/EvalBar';
+import { useTranslation } from '@/lib/i18n/LanguageContext';
 import {
   RotateCcw,
   SkipBack,
@@ -44,6 +45,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   onToggleOrientation,
   className = '',
 }) => {
+  const { t, locale, isRtl } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRetryMode, setIsRetryMode] = useState(false);
   const [retryStatus, setRetryStatus] = useState<'idle' | 'success' | 'incorrect'>('idle');
@@ -106,95 +108,13 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentPly, totalPlies, onSelectPly]);
 
-  // Custom Arrows calculation
-  const customArrows = useMemo((): Arrow[] => {
-    if (isRetryMode) {
-      if (showSolution && currentMove) {
-        const bestFrom = currentMove.bestMoveUci.slice(0, 2);
-        const bestTo = currentMove.bestMoveUci.slice(2, 4);
-        return [{ startSquare: bestFrom, endSquare: bestTo, color: 'rgba(34, 197, 94, 0.85)' }];
-      }
-      return [];
-    }
-
-    if (!currentMove) return [];
-
-    const arrows: Arrow[] = [];
-    const playedFrom = currentMove.from;
-    const playedTo = currentMove.to;
-    const bestUci = currentMove.bestMoveUci;
-
-    const isSuboptimal = [
-      'blunder',
-      'mistake',
-      'inaccuracy',
-      'missed_win',
-    ].includes(currentMove.classification);
-
-    if (isSuboptimal && bestUci && bestUci.length >= 4) {
-      const bestFrom = bestUci.slice(0, 2);
-      const bestTo = bestUci.slice(2, 4);
-
-      // Played move arrow
-      arrows.push({
-        startSquare: playedFrom,
-        endSquare: playedTo,
-        color: currentMove.classification === 'blunder' ? 'rgba(239, 68, 68, 0.75)' : 'rgba(245, 158, 11, 0.75)',
-      });
-
-      // Best move arrow
-      arrows.push({
-        startSquare: bestFrom,
-        endSquare: bestTo,
-        color: 'rgba(34, 197, 94, 0.85)',
-      });
-    } else {
-      arrows.push({
-        startSquare: playedFrom,
-        endSquare: playedTo,
-        color: currentMove.classification === 'brilliant' ? 'rgba(20, 184, 166, 0.85)' : 'rgba(34, 197, 94, 0.85)',
-      });
-    }
-
-    return arrows;
-  }, [currentMove, isRetryMode, showSolution]);
-
-  const targetSquare = !isRetryMode && currentMove ? currentMove.to : null;
-  const currentBadgeMeta = currentMove ? CLASSIFICATION_META[currentMove.classification] : null;
-
-  // Custom square renderer to overlay classification badge
-  const squareRenderer = useCallback(
-    ({ square, children }: any) => {
-      const isTarget = square === targetSquare;
-
-      return (
-        <div className="relative w-full h-full flex items-center justify-center">
-          {children}
-          {isTarget && currentBadgeMeta && (
-            <div
-              className="absolute top-1 right-1 z-20 flex items-center justify-center min-w-[20px] h-[18px] px-1 rounded text-[9px] font-mono font-bold tracking-tight shadow-md border border-white/40 pointer-events-none select-none transition-transform"
-              style={{
-                backgroundColor: currentBadgeMeta.color,
-                color: '#ffffff',
-              }}
-              title={`${currentBadgeMeta.name} (${currentBadgeMeta.symbol})`}
-            >
-              {currentBadgeMeta.symbol}
-            </div>
-          )}
-        </div>
-      );
-    },
-    [targetSquare, currentBadgeMeta]
-  );
-
   const handleStartRetry = () => {
     if (!currentMove) return;
-    setIsPlaying(false);
     setIsRetryMode(true);
     setRetryStatus('idle');
     setShowSolution(false);
     setRetryPositionFen(currentMove.fenBefore);
+    setIsPlaying(false);
   };
 
   const handleCancelRetry = () => {
@@ -204,48 +124,123 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
     setRetryPositionFen(null);
   };
 
-  const handlePieceDrop = ({ piece, sourceSquare, targetSquare }: any): boolean => {
+  const handlePieceDrop = ({
+    sourceSquare,
+    targetSquare,
+  }: {
+    sourceSquare: string;
+    targetSquare: string | null;
+  }) => {
     if (!isRetryMode || !currentMove || !targetSquare) return false;
 
     try {
-      const chess = new Chess(retryPositionFen || currentMove.fenBefore);
-      const isPromotion =
-        (piece.pieceType === 'p' || piece.pieceType === 'P') &&
-        (targetSquare.endsWith('8') || targetSquare.endsWith('1'));
-
-      const moveObj = chess.move({
+      const chess = new Chess(currentMove.fenBefore);
+      const move = chess.move({
         from: sourceSquare,
         to: targetSquare,
-        promotion: isPromotion ? 'q' : undefined,
+        promotion: 'q',
       });
 
-      if (!moveObj) return false;
+      if (!move) return false;
 
-      setRetryPositionFen(chess.fen());
+      const userUci = `${sourceSquare}${targetSquare}`;
+      const bestUci = currentMove.bestMoveUci ? currentMove.bestMoveUci.slice(0, 4) : '';
+      const isCorrect = userUci === bestUci || move.san === currentMove.bestMoveSan;
 
-      const userUci = `${sourceSquare}${targetSquare}${isPromotion ? 'q' : ''}`;
-      const bestUci = currentMove.bestMoveUci;
-
-      if (userUci === bestUci || moveObj.san === currentMove.bestMoveSan) {
+      if (isCorrect) {
+        setRetryPositionFen(chess.fen());
         setRetryStatus('success');
         confetti({
           particleCount: 50,
           spread: 60,
-          origin: { y: 0.65 },
+          origin: { y: 0.6 },
         });
-        return true;
       } else {
         setRetryStatus('incorrect');
-        return true;
       }
+
+      return isCorrect;
     } catch {
       return false;
     }
   };
 
+  const customArrows: Arrow[] = useMemo(() => {
+    const arrows: Arrow[] = [];
+
+    if (isRetryMode && showSolution && currentMove?.bestMoveUci) {
+      const best = currentMove.bestMoveUci;
+      if (best.length >= 4) {
+        arrows.push({
+          startSquare: best.slice(0, 2),
+          endSquare: best.slice(2, 4),
+          color: 'rgba(34, 197, 94, 0.85)',
+        });
+      }
+    } else if (!isRetryMode && currentMove) {
+      if (currentMove.from && currentMove.to) {
+        const meta = CLASSIFICATION_META[currentMove.classification];
+        arrows.push({
+          startSquare: currentMove.from,
+          endSquare: currentMove.to,
+          color: meta.color + 'bb',
+        });
+      }
+
+      const showEngineSuggestion =
+        ['blunder', 'mistake', 'missed_win', 'inaccuracy'].includes(
+          currentMove.classification
+        ) && currentMove.bestMoveUci;
+
+      if (showEngineSuggestion && currentMove.bestMoveUci.length >= 4) {
+        arrows.push({
+          startSquare: currentMove.bestMoveUci.slice(0, 2),
+          endSquare: currentMove.bestMoveUci.slice(2, 4),
+          color: 'rgba(34, 197, 94, 0.75)',
+        });
+      }
+    }
+
+    return arrows;
+  }, [isRetryMode, showSolution, currentMove]);
+
+  const squareRenderer = useCallback(
+    ({
+      square,
+      children,
+    }: {
+      square: string;
+      children?: React.ReactNode;
+    }) => {
+      const isTargetSquare = currentMove && currentMove.to === square && !isRetryMode;
+
+      return (
+        <div className="relative w-full h-full">
+          {children}
+
+          {isTargetSquare && (
+            <div className="absolute top-1 right-1 z-20 pointer-events-none">
+              <span
+                className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-mono font-bold shadow-md"
+                style={{
+                  backgroundColor: CLASSIFICATION_META[currentMove.classification].color,
+                  color: '#ffffff',
+                }}
+                title={CLASSIFICATION_META[currentMove.classification].name}
+              >
+                {CLASSIFICATION_META[currentMove.classification].symbol}
+              </span>
+            </div>
+          )}
+        </div>
+      );
+    },
+    [currentMove, isRetryMode]
+  );
+
   const isCurrentMistake =
     currentMove &&
-    ['blunder', 'mistake', 'inaccuracy', 'missed_win'].includes(currentMove.classification);
+    ['blunder', 'mistake', 'missed_win'].includes(currentMove.classification);
 
   return (
     <div className={`flex flex-col items-center select-none ${className}`}>
@@ -283,32 +278,46 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                 <div className="flex items-center gap-1.5">
                   <Target className="w-3.5 h-3.5 text-amber-400" />
                   <span className="font-semibold text-xs text-white">
-                    Retry Mistake
+                    {t('practiceBannerTitle')}
                   </span>
                 </div>
                 <button
                   onClick={handleCancelRetry}
                   className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-900 border border-white/[0.06]"
                 >
-                  Close
+                  {t('close')}
                 </button>
               </div>
 
               <div className="text-xs text-slate-300">
-                Played move: <span className="text-red-400 font-mono font-medium">{currentMove?.san}</span>. Find the optimal alternative.
+                {locale === 'ar' ? (
+                  <>
+                    النقلة الملعوبة:{' '}
+                    <span className="text-red-400 font-mono font-medium">{currentMove?.san}</span>.
+                    ابحث عن البديل الأفضل.
+                  </>
+                ) : (
+                  <>
+                    Played move:{' '}
+                    <span className="text-red-400 font-mono font-medium">{currentMove?.san}</span>.
+                    Find the optimal alternative.
+                  </>
+                )}
               </div>
 
               {retryStatus === 'success' && (
                 <div className="mt-2 p-2 rounded bg-emerald-950/50 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300 font-medium">
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Best move found: {currentMove?.bestMoveSan}</span>
+                    <span>
+                      {t('practiceCorrect')} ({currentMove?.bestMoveSan})
+                    </span>
                   </div>
                   <button
                     onClick={handleCancelRetry}
                     className="px-2 py-0.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold rounded text-[11px]"
                   >
-                    Done
+                    {t('continueReview')}
                   </button>
                 </div>
               )}
@@ -317,7 +326,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                 <div className="mt-2 p-2 rounded bg-red-950/50 border border-red-500/30 flex items-center justify-between text-xs text-red-300">
                   <div className="flex items-center gap-1.5">
                     <XCircle className="w-3.5 h-3.5 text-red-400" />
-                    <span>Not the best move. Try again.</span>
+                    <span>{t('practiceWrong')}</span>
                   </div>
                   <button
                     onClick={() => {
@@ -326,7 +335,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                     }}
                     className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded text-[11px] border border-white/[0.06]"
                   >
-                    Reset
+                    {locale === 'ar' ? 'إعادة' : 'Reset'}
                   </button>
                 </div>
               )}
@@ -338,7 +347,9 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                     className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200"
                   >
                     <Lightbulb className="w-3 h-3 text-amber-400" />
-                    <span>Reveal best move ({currentMove?.bestMoveSan})</span>
+                    <span>
+                      {t('solution')} ({currentMove?.bestMoveSan})
+                    </span>
                   </button>
                 </div>
               )}
@@ -353,7 +364,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
         <div className="flex items-center gap-1">
           <button
             onClick={onToggleOrientation}
-            title="Flip Board"
+            title={t('flipBoard')}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -365,13 +376,13 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/25 text-xs font-medium transition-colors"
             >
               <Target className="w-3 h-3" />
-              <span>Retry</span>
+              <span>{t('retryMistake')}</span>
             </button>
           )}
         </div>
 
         {/* Center: Stepping Controls */}
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5" dir="ltr">
           <button
             onClick={() => {
               setIsPlaying(false);
@@ -379,7 +390,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               onSelectPly(0);
             }}
             disabled={currentPly === 0}
-            title="First Move"
+            title={t('firstMove')}
             className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
           >
             <SkipBack className="w-3.5 h-3.5" />
@@ -392,7 +403,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               if (currentPly > 0) onSelectPly(currentPly - 1);
             }}
             disabled={currentPly === 0}
-            title="Previous Move"
+            title={t('prevMove')}
             className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -400,7 +411,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
           <button
             onClick={() => setIsPlaying((prev) => !prev)}
-            title={isPlaying ? 'Pause' : 'Play Auto-Step'}
+            title={isPlaying ? t('pause') : t('autoPlay')}
             className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/[0.06] transition-colors mx-1"
           >
             {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
@@ -412,8 +423,8 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               setIsRetryMode(false);
               if (currentPly < totalPlies) onSelectPly(currentPly + 1);
             }}
-            disabled={currentPly >= totalPlies}
-            title="Next Move"
+            disabled={currentPly === totalPlies}
+            title={t('nextMove')}
             className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
           >
             <ChevronRight className="w-4 h-4" />
@@ -425,16 +436,16 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               setIsRetryMode(false);
               onSelectPly(totalPlies);
             }}
-            disabled={currentPly >= totalPlies}
-            title="Last Move"
+            disabled={currentPly === totalPlies}
+            title={t('lastMove')}
             className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
           >
             <SkipForward className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Right: Ply count */}
-        <div className="text-[11px] font-mono text-slate-400 px-1">
+        {/* Right: Step Counter */}
+        <div className="text-[11px] font-mono text-slate-400 px-1" dir="ltr">
           {currentPly}/{totalPlies}
         </div>
       </div>

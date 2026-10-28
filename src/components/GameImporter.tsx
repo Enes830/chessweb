@@ -7,6 +7,7 @@ import {
   parsePgnToMetadata,
 } from '@/lib/chesscom';
 import { RecentGameItem, GameMetadata } from '@/types/chess';
+import { useTranslation } from '@/lib/i18n/LanguageContext';
 import {
   Search,
   Clipboard,
@@ -24,8 +25,10 @@ interface GameImporterProps {
 
 export const SAMPLE_GAMES = [
   {
-    title: 'Morphy vs. Duke of Brunswick (Opera Game)',
-    subtitle: 'Paris, 1858 — Rapid piece coordination and queen sacrifice',
+    titleKey: 'libraryOperaTitle' as const,
+    descKey: 'libraryOperaDesc' as const,
+    fallbackTitle: 'Morphy vs. Duke of Brunswick (Opera Game)',
+    fallbackDesc: 'Paris, 1858 — Rapid piece coordination and queen sacrifice',
     white: 'Paul Morphy',
     black: 'Duke Karl / Count Isouard',
     year: '1858',
@@ -40,8 +43,10 @@ export const SAMPLE_GAMES = [
 1. e4 e5 2. Nf3 d6 3. d4 Bg4 4. dxe5 Bxf3 5. Qxf3 dxe5 6. Bc4 Nf6 7. Qb3 Qe7 8. Nc3 c6 9. Bg5 b5 10. Nxb5 cxb5 11. Bxb5+ Nbd7 12. O-O-O Rd8 13. Rxd7 Rxd7 14. Rd1 Qe6 15. Bxd7+ Nxd7 16. Qb8+ Nxb8 17. Rd8# 1-0`,
   },
   {
-    title: 'Kasparov vs. Topalov (Kasparov\'s Immortal)',
-    subtitle: 'Wijk aan Zee, 1999 — Dynamic rook sacrifice and King march',
+    titleKey: 'libraryKasparovTitle' as const,
+    descKey: 'libraryKasparovDesc' as const,
+    fallbackTitle: "Kasparov vs. Topalov (Kasparov's Immortal)",
+    fallbackDesc: 'Wijk aan Zee, 1999 — Dynamic rook sacrifice and King march',
     white: 'Garry Kasparov',
     black: 'Veselin Topalov',
     year: '1999',
@@ -56,8 +61,10 @@ export const SAMPLE_GAMES = [
 1. e4 d6 2. d4 Nf6 3. Nc3 g6 4. Be3 Bg7 5. Qd2 c6 6. f3 b5 7. Nge2 Nbd7 8. Bh6 Bxh6 9. Qxh6 Bb7 10. a3 e5 11. O-O-O Qe7 12. Kb1 a6 13. Nc1 O-O-O 14. Nb3 exd4 15. Rxd4 c5 16. Rd1 Nb6 17. g3 Kb8 18. Na5 Ba8 19. Bh3 d5 20. Qf4+ Ka7 21. Rhe1 d4 22. Nd5 Nbxd5 23. exd5 Qd6 24. Rxd4 cxd4 25. Re7+ Kb6 26. Qxd4+ Kxa5 27. b4+ Ka4 28. Qc3 Qxd5 29. Ra7 tactics 1-0`,
   },
   {
-    title: 'Tactical Comeback Game',
-    subtitle: 'Open Italian position with multiple tactical swings and mistake recoveries',
+    titleKey: 'libraryTacticalTitle' as const,
+    descKey: 'libraryTacticalDesc' as const,
+    fallbackTitle: 'Tactical Comeback Game',
+    fallbackDesc: 'Open Italian position with multiple tactical swings and mistake recoveries',
     white: 'Player A',
     black: 'Player B',
     year: '2024',
@@ -69,11 +76,12 @@ export const SAMPLE_GAMES = [
 [Result "0-1"]
 [ECO "C50"]
 
-1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. d3 Nf6 5. Nc3 d6 6. Bg5 h6 7. Bh4 g5 8. Bg3 Bg4 9. h3 Bh5 10. Nd5 Nd4 11. c3 Nxf3+ 12. gxf3 c6 13. Ne3 Qd7 14. Nf5 O-O-O 15. Qe2 d5 16. Bb3 dxe4 17. dxe4 Nxe4 18. Qxe4 Qd2+ 19. Kf1 Rd3 20. Rd1 Qxd1+ 21. Bxd1 Rxd1+ 22. Kg2 Rxh1 23. Kxh1 f6 24. Ne7+ Bxe7 25. Qf5+ Kd8 26. Bxe5 fxe5 27. Qxe5 Bxf3+ 28. Kg1 Re8 29. Qb8+ Kd7 30. Qxb7+ Ke6 0-1`,
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. d3 Nf6 5. Nc3 d6 6. Bg5 h6 7. Bh4 g5 8. Bg3 Bg4 9. h3 Bh5 10. Nd5 Nd4 11. c3 Nxf3+ 12. gxf3 c6 13. Nxf3 Qd7 14. Nf5 O-O-O 15. Qe2 d5 16. Bb3 dxe4 17. dxe4 Nxe4 18. Qxe4 Qd2+ 19. Kf1 Rd3 20. Rd1 Qxd1+ 21. Bxd1 Rxd1+ 22. Kg2 Rxh1 23. Kxh1 f6 24. Ne7+ Bxe7 25. Qf5+ Kd8 26. Bxe5 fxe5 27. Qxe5 Bxf3+ 28. Kg1 Re8 29. Qb8+ Kd7 30. Qxb7+ Ke6 0-1`,
   },
 ];
 
 export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoading = false }) => {
+  const { t, isRtl } = useTranslation();
   const [inputVal, setInputVal] = useState('');
   const [activeTab, setActiveTab] = useState<'omnibox' | 'pgn' | 'samples'>('omnibox');
   const [recentGames, setRecentGames] = useState<RecentGameItem[]>([]);
@@ -97,7 +105,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
         const games = await fetchChessComUserGames(parsedValue);
         setRecentGames(games);
         if (games.length === 0) {
-          setErrorMsg(`No recent games found for Chess.com user "${parsedValue}".`);
+          setErrorMsg(t('noGamesFound'));
         }
       } catch (err: any) {
         setErrorMsg(err.message || 'Failed to fetch player games.');
@@ -128,7 +136,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
         const meta = parsePgnToMetadata(query);
         onLoadGame(query, meta);
       } catch (err: any) {
-        setErrorMsg(err.message || 'Failed to parse PGN.');
+        setErrorMsg(err.message || t('invalidPgn'));
       }
     }
   };
@@ -153,7 +161,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
       const meta = parsePgnToMetadata(rawPgnVal);
       onLoadGame(rawPgnVal, meta);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Invalid PGN format.');
+      setErrorMsg(err.message || t('invalidPgn'));
     }
   };
 
@@ -170,7 +178,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Search or URL
+            {t('tabSearch')}
           </button>
           <button
             onClick={() => setActiveTab('pgn')}
@@ -180,7 +188,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Paste PGN
+            {t('tabPgn')}
           </button>
           <button
             onClick={() => setActiveTab('samples')}
@@ -190,7 +198,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Library Games
+            {t('tabLibrary')}
           </button>
         </div>
 
@@ -199,7 +207,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
           className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 border border-white/[0.06] transition-colors"
         >
           <Clipboard className="w-3.5 h-3.5 text-slate-400" />
-          <span>Paste</span>
+          <span>{t('pasteBtn')}</span>
         </button>
       </div>
 
@@ -207,30 +215,34 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
       {activeTab === 'omnibox' && (
         <div className="space-y-4">
           <form onSubmit={handleOmniboxSubmit} className="relative flex items-center">
-            <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+            <div className={`absolute ${isRtl ? 'right-3.5' : 'left-3.5'} text-slate-400 pointer-events-none`}>
               <Search className="w-4 h-4 text-slate-400" />
             </div>
             <input
               type="text"
               value={inputVal}
               onChange={(e) => setInputVal(e.target.value)}
-              placeholder="Chess.com username, game link, or Lichess URL..."
-              className="w-full pl-10 pr-24 py-2.5 bg-slate-900 border border-white/[0.08] focus:border-slate-500 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none transition-colors"
+              placeholder={t('searchPlaceholder')}
+              className={`w-full ${
+                isRtl ? 'pr-10 pl-24' : 'pl-10 pr-24'
+              } py-2.5 bg-slate-900 border border-white/[0.08] focus:border-slate-500 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none transition-colors`}
             />
             <button
               type="submit"
               disabled={isFetchingGames || isLoading || !inputVal.trim()}
-              className="absolute right-1.5 px-3 py-1.5 bg-slate-100 hover:bg-white disabled:opacity-40 text-slate-950 font-semibold text-xs rounded-md transition-colors flex items-center gap-1"
+              className={`absolute ${
+                isRtl ? 'left-1.5' : 'right-1.5'
+              } px-3 py-1.5 bg-slate-100 hover:bg-white disabled:opacity-40 text-slate-950 font-semibold text-xs rounded-md transition-colors flex items-center gap-1`}
             >
               {isFetchingGames ? (
                 <>
                   <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>Loading</span>
+                  <span>...</span>
                 </>
               ) : (
                 <>
-                  <span>Load</span>
-                  <ArrowRight className="w-3 h-3" />
+                  <span>{t('loadBtn')}</span>
+                  <ArrowRight className={`w-3 h-3 ${isRtl ? 'rotate-180' : ''}`} />
                 </>
               )}
             </button>
@@ -246,7 +258,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
 
           {/* Quick Player Suggestions */}
           <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
-            <span className="text-slate-500 font-mono text-[11px]">Popular profiles:</span>
+            <span className="text-slate-500 font-mono text-[11px]">{t('popularProfiles')}</span>
             {['hikaru', 'magnuscarlsen', 'daniilnaroditsky'].map((user) => (
               <button
                 key={user}
@@ -275,17 +287,17 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
             <div className="bg-slate-900/70 border border-white/[0.08] rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-400">Player:</span>
+                  <span className="text-slate-400">{t('recentGamesTitle')}:</span>
                   <span className="font-semibold text-white font-mono">@{searchedUser}</span>
                 </div>
                 <span className="text-[11px] text-slate-500 font-mono">
-                  {recentGames.length} games available
+                  {recentGames.length}
                 </span>
               </div>
 
               {recentGames.length === 0 && !isFetchingGames && (
                 <div className="text-center py-6 text-slate-500 text-xs font-mono">
-                  No games found in the current archive.
+                  {t('noGamesFound')}
                 </div>
               )}
 
@@ -335,7 +347,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                               : 'bg-slate-800 text-slate-400 border border-slate-700'
                           }`}
                         >
-                          {isWin ? 'Win' : isLoss ? 'Loss' : 'Draw'}
+                          {isWin ? t('win') : isLoss ? t('loss') : t('draw')}
                         </span>
 
                         <button
@@ -345,7 +357,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                           }}
                           className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs border border-white/[0.06] transition-colors"
                         >
-                          Review
+                          {t('analyzeBtn')}
                         </button>
                       </div>
                     </div>
@@ -364,7 +376,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
             value={rawPgnVal}
             onChange={(e) => setRawPgnVal(e.target.value)}
             rows={7}
-            placeholder="[Event &quot;Live Chess&quot;]&#10;1. e4 e5 2. Nf3 Nc6..."
+            placeholder={t('pgnPlaceholder')}
             className="w-full p-3 bg-slate-900 border border-white/[0.08] focus:border-slate-500 rounded-lg text-white font-mono text-xs placeholder-slate-600 focus:outline-none transition-colors"
           />
           <div className="flex justify-end">
@@ -373,7 +385,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
               disabled={isLoading || !rawPgnVal.trim()}
               className="px-4 py-2 bg-slate-100 hover:bg-white disabled:opacity-40 text-slate-950 font-semibold text-xs rounded-md transition-colors"
             >
-              Analyze PGN
+              {t('analyzeBtn')}
             </button>
           </div>
         </form>
@@ -392,9 +404,11 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                   <span>{sample.year}</span>
                   <BookOpen className="w-3.5 h-3.5 text-slate-500" />
                 </div>
-                <h4 className="font-semibold text-sm text-slate-200">{sample.title}</h4>
+                <h4 className="font-semibold text-sm text-slate-200">
+                  {t(sample.titleKey)}
+                </h4>
                 <p className="text-xs text-slate-400 line-clamp-2">
-                  {sample.subtitle}
+                  {t(sample.descKey)}
                 </p>
               </div>
 
@@ -405,7 +419,7 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                 }}
                 className="w-full py-1.5 px-3 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs border border-white/[0.06] transition-colors"
               >
-                Analyze Game
+                {t('analyzeBtn')}
               </button>
             </div>
           ))}

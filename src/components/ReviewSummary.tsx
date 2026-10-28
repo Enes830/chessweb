@@ -3,6 +3,7 @@
 import React from 'react';
 import { GameReviewReport, MoveClassification } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
+import { useTranslation } from '@/lib/i18n/LanguageContext';
 import { Target, Send, RotateCcw, TrendingUp } from 'lucide-react';
 
 interface ReviewSummaryProps {
@@ -20,6 +21,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
   onRestartReview,
   className = '',
 }) => {
+  const { t } = useTranslation();
   const {
     metadata,
     whiteAccuracy,
@@ -41,6 +43,19 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
     'blunder',
     'missed_win',
   ];
+
+  const classKeyMap: Record<MoveClassification, any> = {
+    brilliant: 'classBrilliant',
+    great: 'classGreat',
+    best: 'classBest',
+    excellent: 'classExcellent',
+    good: 'classGood',
+    book: 'classBook',
+    inaccuracy: 'classInaccuracy',
+    mistake: 'classMistake',
+    blunder: 'classBlunder',
+    missed_win: 'classMissedWin',
+  };
 
   const totalMistakes =
     (classificationsCount.white.blunder || 0) +
@@ -76,7 +91,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
                 {whiteAccuracy}%
               </span>
               <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">
-                Accuracy
+                {t('accuracyTitle')}
               </span>
             </div>
           </div>
@@ -84,7 +99,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
           <div className="mt-2.5 pt-2 border-t border-white/[0.06] flex items-center justify-between text-xs">
             <span className="text-slate-400 text-[11px] flex items-center gap-1">
               <TrendingUp className="w-3 h-3 text-slate-400" />
-              Est. Elo
+              {t('perfRating')}
             </span>
             <span className="font-mono text-xs font-semibold text-slate-200">
               {whiteEstimatedElo}
@@ -114,7 +129,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
                 {blackAccuracy}%
               </span>
               <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">
-                Accuracy
+                {t('accuracyTitle')}
               </span>
             </div>
           </div>
@@ -122,7 +137,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
           <div className="mt-2.5 pt-2 border-t border-white/[0.06] flex items-center justify-between text-xs">
             <span className="text-slate-400 text-[11px] flex items-center gap-1">
               <TrendingUp className="w-3 h-3 text-slate-400" />
-              Est. Elo
+              {t('perfRating')}
             </span>
             <span className="font-mono text-xs font-semibold text-slate-200">
               {blackEstimatedElo}
@@ -134,9 +149,9 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
       {/* Move Breakdown Matrix */}
       <div className="bg-slate-900/80 border border-white/[0.08] rounded-xl p-3">
         <div className="grid grid-cols-[1fr_45px_45px] text-[10px] font-semibold uppercase tracking-wider text-slate-400 pb-2 border-b border-white/[0.06] px-1">
-          <span>Move Tier</span>
-          <span className="text-center">White</span>
-          <span className="text-center">Black</span>
+          <span>{t('classificationBreakdown')}</span>
+          <span className="text-center">{t('white')}</span>
+          <span className="text-center">{t('black')}</span>
         </div>
 
         <div className="divide-y divide-white/[0.04] text-xs">
@@ -144,6 +159,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
             const meta = CLASSIFICATION_META[type];
             const wCount = classificationsCount.white[type] || 0;
             const bCount = classificationsCount.black[type] || 0;
+            const localizedName = t(classKeyMap[type]);
 
             return (
               <div
@@ -161,7 +177,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
                   >
                     {meta.symbol}
                   </span>
-                  <span className="text-slate-300 font-medium text-xs">{meta.name}</span>
+                  <span className="text-slate-300 font-medium text-xs">{localizedName}</span>
                 </div>
                 <span
                   className={`text-center font-mono text-xs ${
@@ -191,7 +207,9 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
             className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 font-semibold text-xs transition-colors"
           >
             <Target className="w-3.5 h-3.5" />
-            <span>Practice Mistakes ({totalMistakes})</span>
+            <span>
+              {t('retryActionBtn')} ({totalMistakes})
+            </span>
           </button>
         )}
 
@@ -200,7 +218,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
           className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/[0.08] font-semibold text-xs transition-colors"
         >
           <Send className="w-3.5 h-3.5 text-slate-400" />
-          <span>Export Puzzles to Telegram</span>
+          <span>{t('openTelegramModal')}</span>
         </button>
 
         <button
@@ -208,7 +226,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
           className="w-full flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-900 text-xs font-medium transition-colors"
         >
           <RotateCcw className="w-3 h-3" />
-          <span>Start Over from Move 1</span>
+          <span>{t('restartReview')}</span>
         </button>
       </div>
     </div>

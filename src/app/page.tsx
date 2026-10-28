@@ -19,6 +19,7 @@ import {
   savePuzzlesToLocalStorage,
 } from '@/lib/bridge/telegramExport';
 import { lookupOpening } from '@/lib/openings';
+import { useTranslation } from '@/lib/i18n/LanguageContext';
 
 // UI Components
 import { GameImporter } from '@/components/GameImporter';
@@ -33,11 +34,12 @@ import {
   RotateCcw,
   Loader2,
   Send,
-  Layers,
   Activity,
+  Globe,
 } from 'lucide-react';
 
 export default function HomePage() {
+  const { t, locale, toggleLocale, dir, isRtl } = useTranslation();
   const [gameState, setGameState] = useState<'import' | 'analyzing' | 'reviewed'>('import');
   const [currentPgn, setCurrentPgn] = useState<string | null>(null);
   const [gameMetadata, setGameMetadata] = useState<GameMetadata | null>(null);
@@ -230,7 +232,7 @@ export default function HomePage() {
           pieceSacrificed: classificationResult.pieceSacrificed,
         };
 
-        moveAnalysis.explanation = generateHeuristicExplanation(moveAnalysis);
+        moveAnalysis.explanation = generateHeuristicExplanation(moveAnalysis, locale);
         analyzedMoves.push(moveAnalysis);
 
         const colorKey = step.turn === 'w' ? 'white' : 'black';
@@ -282,7 +284,12 @@ export default function HomePage() {
     reviewReport && currentPly > 0 ? reviewReport.moves[currentPly - 1] : null;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#090c15] text-slate-100">
+    <div
+      dir={dir}
+      className={`min-h-screen flex flex-col bg-[#090c15] text-slate-100 ${
+        isRtl ? 'font-sans' : 'font-sans'
+      }`}
+    >
       {/* Top Navbar */}
       <header className="border-b border-white/[0.08] bg-[#0c101c]/90 backdrop-blur sticky top-0 z-40 px-4 sm:px-6 py-2.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -298,17 +305,27 @@ export default function HomePage() {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-semibold text-sm tracking-tight text-white">
-                RewindBoard
+                {t('brandName')}
               </span>
               <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-mono text-slate-400 bg-slate-900 border border-white/[0.06]">
                 <Activity className="w-2.5 h-2.5 text-emerald-400" />
-                Stockfish 19
+                {t('engineBadge')}
               </span>
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Language Switcher */}
+          <button
+            onClick={toggleLocale}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/[0.08] transition-colors"
+            title={t('language')}
+          >
+            <Globe className="w-3.5 h-3.5 text-slate-400" />
+            <span>{t('toggleLang')}</span>
+          </button>
+
           {gameState === 'reviewed' && (
             <button
               onClick={() => {
@@ -318,7 +335,7 @@ export default function HomePage() {
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/[0.08] transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>New Analysis</span>
+              <span>{t('newAnalysis')}</span>
             </button>
           )}
 
@@ -329,7 +346,7 @@ export default function HomePage() {
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/[0.08] transition-colors"
           >
             <Send className="w-3 h-3 text-slate-400" />
-            <span className="hidden sm:inline">Telegram Bot</span>
+            <span className="hidden sm:inline">{t('telegramBot')}</span>
           </a>
         </div>
       </header>
@@ -341,11 +358,10 @@ export default function HomePage() {
           <div className="py-8 sm:py-14 space-y-6">
             <div className="text-center space-y-2 max-w-xl mx-auto">
               <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-                Chess Game Review
+                {t('heroTitle')}
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 leading-relaxed font-normal">
-                Analyze games with client-side Stockfish 19 WebAssembly. Accurate accuracy scores,
-                tactical breakdown, and mistake practice.
+                {t('heroSubtitle')}
               </p>
             </div>
 
@@ -362,10 +378,10 @@ export default function HomePage() {
 
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-white">
-                Evaluating Game Positions
+                {t('analyzingTitle')}
               </h2>
-              <p className="text-xs font-mono text-slate-400">
-                Move {currentPlyAnalyzing} of {totalPliesToAnalyze} • Stockfish 19
+              <p className="text-xs font-mono text-slate-400" dir="ltr">
+                {t('evaluatingMove', { current: currentPlyAnalyzing, total: totalPliesToAnalyze })}
               </p>
             </div>
 
@@ -376,8 +392,8 @@ export default function HomePage() {
                   style={{ width: `${analysisProgress}%` }}
                 />
               </div>
-              <div className="flex justify-between text-[11px] text-slate-500 font-mono">
-                <span>MultiPV 2 • Depth 14</span>
+              <div className="flex justify-between text-[11px] text-slate-500 font-mono" dir="ltr">
+                <span>{t('multiPvInfo')}</span>
                 <span className="font-semibold text-slate-300">{analysisProgress}%</span>
               </div>
             </div>
@@ -389,7 +405,7 @@ export default function HomePage() {
               }}
               className="text-xs text-slate-500 hover:text-slate-300 transition-colors pt-2"
             >
-              Cancel
+              {t('cancel')}
             </button>
           </div>
         )}
@@ -402,7 +418,7 @@ export default function HomePage() {
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1.5 font-semibold text-white">
                   <span>{reviewReport.metadata.white.username}</span>
-                  <span className="text-slate-500 font-normal">vs</span>
+                  <span className="text-slate-500 font-normal">{t('vs')}</span>
                   <span>{reviewReport.metadata.black.username}</span>
                 </div>
                 {reviewReport.metadata.opening && (
@@ -414,7 +430,7 @@ export default function HomePage() {
 
               <div className="flex items-center gap-3 text-slate-400 text-xs font-mono">
                 <span>
-                  Result: <strong className="text-white">{reviewReport.metadata.result}</strong>
+                  {t('result')} <strong className="text-white">{reviewReport.metadata.result}</strong>
                 </span>
                 {reviewReport.metadata.date && <span>• {reviewReport.metadata.date}</span>}
               </div>
@@ -463,7 +479,7 @@ export default function HomePage() {
                             : 'text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        Summary
+                        {t('tabSummary')}
                       </button>
                       <button
                         onClick={() => setActiveRightTab('moves')}
@@ -473,7 +489,7 @@ export default function HomePage() {
                             : 'text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        Moves ({reviewReport.moves.length})
+                        {t('tabMoves')} ({reviewReport.moves.length})
                       </button>
                     </div>
 
@@ -482,7 +498,7 @@ export default function HomePage() {
                       className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-white transition-colors"
                     >
                       <Send className="w-3 h-3 text-slate-400" />
-                      <span>Telegram</span>
+                      <span>{t('tabTelegram')}</span>
                     </button>
                   </div>
 

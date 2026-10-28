@@ -6,6 +6,7 @@ import {
   createTelegramBotDeepLink,
   sendPuzzlesToWebhook,
 } from '@/lib/bridge/telegramExport';
+import { useTranslation } from '@/lib/i18n/LanguageContext';
 import { Send, Copy, Check, ExternalLink, X, CheckCircle2 } from 'lucide-react';
 
 interface TelegramBridgeModalProps {
@@ -23,6 +24,7 @@ export const TelegramBridgeModal: React.FC<TelegramBridgeModalProps> = ({
   whitePlayer,
   blackPlayer,
 }) => {
+  const { t, locale } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [isSendingWebhook, setIsSendingWebhook] = useState(false);
   const [webhookMessage, setWebhookMessage] = useState<string | null>(null);
@@ -53,13 +55,13 @@ export const TelegramBridgeModal: React.FC<TelegramBridgeModalProps> = ({
         <div className="flex items-center justify-between p-4 border-b border-white/[0.08]">
           <div>
             <h3 className="text-base font-semibold text-white flex items-center gap-2">
-              Export Puzzles to Telegram
+              {t('modalTitle')}
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-white/[0.06]">
                 @RewindChessBot
               </span>
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Sync detected mistake positions directly into your personal puzzle trainer.
+              {t('modalDesc')}
             </p>
           </div>
           <button
@@ -74,22 +76,28 @@ export const TelegramBridgeModal: React.FC<TelegramBridgeModalProps> = ({
         <div className="p-4 overflow-y-auto space-y-3">
           <div className="flex items-center justify-between bg-slate-950/60 p-2.5 rounded-lg border border-white/[0.06] text-xs">
             <div className="text-slate-300">
-              <span className="text-slate-500">Game: </span>
+              <span className="text-slate-500">
+                {locale === 'ar' ? 'المباراة: ' : 'Game: '}
+              </span>
               <span className="font-medium text-white">{whitePlayer}</span>
-              <span className="text-slate-500"> vs </span>
+              <span className="text-slate-500"> {t('vs')} </span>
               <span className="font-medium text-white">{blackPlayer}</span>
             </div>
-            <div className="text-xs font-mono text-slate-300">
-              {puzzles.length} {puzzles.length === 1 ? 'position' : 'positions'}
+            <div className="text-xs font-mono text-slate-300" dir="ltr">
+              {puzzles.length} {locale === 'ar' ? 'مواقف' : puzzles.length === 1 ? 'position' : 'positions'}
             </div>
           </div>
 
           {puzzles.length === 0 ? (
             <div className="text-center py-8 text-slate-400 text-xs">
               <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto mb-2 opacity-80" />
-              <p className="font-medium text-slate-200">No Blunders or Mistakes</p>
+              <p className="font-medium text-slate-200">
+                {locale === 'ar' ? 'لا توجد أخطاء فادحة' : 'No Blunders or Mistakes'}
+              </p>
               <p className="text-slate-500 mt-0.5">
-                All moves in this game met accuracy thresholds.
+                {locale === 'ar'
+                  ? 'جميع النقلات في هذه المباراة كانت ضمن الحدود الدقيقة.'
+                  : 'All moves in this game met accuracy thresholds.'}
               </p>
             </div>
           ) : (
@@ -102,7 +110,8 @@ export const TelegramBridgeModal: React.FC<TelegramBridgeModalProps> = ({
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-slate-300">
-                        Move {p.move_number} ({p.player_color === 'w' ? 'White' : 'Black'})
+                        {locale === 'ar' ? 'النقلة ' : 'Move '}
+                        {p.move_number} ({p.player_color === 'w' ? t('white') : t('black')})
                       </span>
                       <span
                         className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded uppercase ${
@@ -116,7 +125,7 @@ export const TelegramBridgeModal: React.FC<TelegramBridgeModalProps> = ({
                         {p.puzzle_type}
                       </span>
                     </div>
-                    <div className="text-[11px] font-mono text-slate-500">
+                    <div className="text-[11px] font-mono text-slate-500" dir="ltr">
                       Played: <span className="text-slate-400">{p.user_played_move_uci}</span> • Best:{' '}
                       <span className="text-emerald-400">{p.best_move_uci}</span>
                     </div>
@@ -142,7 +151,7 @@ export const TelegramBridgeModal: React.FC<TelegramBridgeModalProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-white/[0.06] transition-colors disabled:opacity-40"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied ? 'Copied' : 'Copy JSON'}</span>
+              <span>{copied ? (locale === 'ar' ? 'تم النسخ' : 'Copied') : t('downloadJson')}</span>
             </button>
 
             {process.env.NEXT_PUBLIC_BOT_WEBHOOK_URL && (
@@ -163,7 +172,7 @@ export const TelegramBridgeModal: React.FC<TelegramBridgeModalProps> = ({
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-slate-100 hover:bg-white text-slate-950 font-semibold text-xs transition-colors"
           >
-            <span>Open in Telegram</span>
+            <span>{t('launchBot')}</span>
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </div>

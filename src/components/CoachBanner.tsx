@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { MoveAnalysis } from '@/types/chess';
+import { MoveAnalysis, MoveClassification } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
-import { getMoveExplanation } from '@/lib/coachExplainer';
+import { getMoveExplanation, generateHeuristicExplanation } from '@/lib/coachExplainer';
+import { useTranslation } from '@/lib/i18n/LanguageContext';
 import { ChevronDown, ChevronUp, Loader2, Info } from 'lucide-react';
 
 interface CoachBannerProps {
@@ -17,6 +18,7 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
   currentPly,
   className = '',
 }) => {
+  const { t, locale } = useTranslation();
   const [isExplaining, setIsExplaining] = useState(false);
   const [explanationText, setExplanationText] = useState<string | null>(null);
   const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
@@ -24,7 +26,7 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
   useEffect(() => {
     setIsExplaining(false);
     setExplanationText(null);
-  }, [currentPly]);
+  }, [currentPly, locale]);
 
   if (currentPly === 0 || !currentMove) {
     return (
@@ -32,8 +34,12 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
         className={`bg-slate-900/80 border border-white/[0.08] rounded-xl p-3 flex items-center justify-between text-xs text-slate-400 ${className}`}
       >
         <div className="flex items-center gap-2">
-          <Info className="w-4 h-4 text-slate-400" />
-          <span>Starting position. Use left/right arrow keys or click a move below.</span>
+          <Info className="w-4 h-4 text-slate-400 shrink-0" />
+          <span>
+            {locale === 'ar'
+              ? 'موقف البداية. استخدم مفاتيح الأسهم أو انقر على النقلات أدناه للتنقل.'
+              : 'Starting position. Use left/right arrow keys or click a move below.'}
+          </span>
         </div>
       </div>
     );
@@ -41,6 +47,21 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
 
   const meta = CLASSIFICATION_META[currentMove.classification];
   const isOptimal = ['brilliant', 'great', 'best', 'book'].includes(currentMove.classification);
+
+  // Localized classification name
+  const classKeyMap: Record<MoveClassification, any> = {
+    brilliant: 'classBrilliant',
+    great: 'classGreat',
+    best: 'classBest',
+    excellent: 'classExcellent',
+    good: 'classGood',
+    book: 'classBook',
+    inaccuracy: 'classInaccuracy',
+    mistake: 'classMistake',
+    blunder: 'classBlunder',
+    missed_win: 'classMissedWin',
+  };
+  const localizedClassName = t(classKeyMap[currentMove.classification] || 'classGood');
 
   const handleToggleExplain = async () => {
     if (isExplaining) {
@@ -52,15 +73,17 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
     if (!explanationText) {
       setIsLoadingExplanation(true);
       try {
-        const text = await getMoveExplanation(currentMove);
+        const text = await getMoveExplanation(currentMove, locale);
         setExplanationText(text);
       } catch {
-        setExplanationText(currentMove.explanation || 'Move analysis calculated.');
+        setExplanationText(generateHeuristicExplanation(currentMove, locale));
       } finally {
         setIsLoadingExplanation(false);
       }
     }
   };
+
+  const playerColorText = currentMove.turn === 'w' ? t('white') : t('black');
 
   return (
     <div
@@ -77,12 +100,21 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
             }}
           >
             <span>{meta.symbol}</span>
-            <span>{meta.name}</span>
+            <span>{localizedClassName}</span>
           </span>
 
           <span className="text-xs sm:text-sm font-medium text-slate-200">
-            {currentMove.turn === 'w' ? 'White' : 'Black'} played{' '}
-            <span className="font-mono font-semibold text-white">{currentMove.san}</span>
+            {locale === 'ar' ? (
+              <>
+                لعب <span className="font-semibold">{playerColorText}</span> نقلة{' '}
+                <span className="font-mono font-semibold text-white">{currentMove.san}</span>
+              </>
+            ) : (
+              <>
+                {playerColorText} played{' '}
+                <span className="font-mono font-semibold text-white">{currentMove.san}</span>
+              </>
+            )}
           </span>
         </div>
 
@@ -90,7 +122,7 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
           onClick={handleToggleExplain}
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-white/[0.06] transition-colors"
         >
-          <span>Tactical Context</span>
+          <span>{isExplaining ? t('hideTactics') : t('showTactics')}</span>
           {isExplaining ? (
             <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
           ) : (
@@ -103,14 +135,15 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
         <div className="font-mono text-[11px]">
           {!isOptimal && currentMove.bestMoveSan && (
             <span className="text-slate-300">
-              Optimal: <span className="text-emerald-400 font-semibold">{currentMove.bestMoveSan}</span>
+              {t('bestMoveLabel')}{' '}
+              <span className="text-emerald-400 font-semibold">{currentMove.bestMoveSan}</span>
             </span>
           )}
         </div>
 
         {currentMove.winPctLoss > 0 && (
           <span className="text-slate-500 font-mono text-[11px]">
-            Win prob. loss: -{currentMove.winPctLoss.toFixed(1)}%
+            {t('evalLoss')} -{currentMove.winPctLoss.toFixed(1)}%
           </span>
         )}
       </div>
@@ -120,11 +153,15 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
           {isLoadingExplanation ? (
             <div className="flex items-center gap-2 py-1 text-slate-400">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Analyzing tactical refutation...</span>
+              <span>
+                {locale === 'ar'
+                  ? 'جاري استخراج التحليل التكتيكي...'
+                  : 'Analyzing tactical refutation...'}
+              </span>
             </div>
           ) : (
             <p className="leading-relaxed text-slate-300 font-sans">
-              {explanationText || currentMove.explanation}
+              {explanationText || generateHeuristicExplanation(currentMove, locale)}
             </p>
           )}
         </div>
