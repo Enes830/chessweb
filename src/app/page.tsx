@@ -1,13 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Chess } from 'chess.js';
 import {
   GameMetadata,
   GameReviewReport,
   MoveAnalysis,
-  MoveClassification,
-  RewindPuzzlePayload,
 } from '@/types/chess';
 import {
   classifyMove,
@@ -23,7 +21,7 @@ import {
 import { lookupOpening } from '@/lib/openings';
 
 // UI Components
-import { GameImporter, SAMPLE_GAMES } from '@/components/GameImporter';
+import { GameImporter } from '@/components/GameImporter';
 import { ChessReviewBoard } from '@/components/ChessReviewBoard';
 import { CoachBanner } from '@/components/CoachBanner';
 import { ReviewSummary } from '@/components/ReviewSummary';
@@ -32,15 +30,11 @@ import { MoveList } from '@/components/MoveList';
 import { TelegramBridgeModal } from '@/components/TelegramBridgeModal';
 
 import {
-  ShieldCheck,
-  Cpu,
   RotateCcw,
-  Sparkles,
-  Swords,
   Loader2,
-  Bot,
+  Send,
   Layers,
-  ArrowRight,
+  Activity,
 } from 'lucide-react';
 
 export default function HomePage() {
@@ -82,7 +76,6 @@ export default function HomePage() {
       const chess = new Chess();
       chess.loadPgn(pgn);
 
-      // Collect move history
       const history = chess.history({ verbose: true });
       const totalPlies = history.length;
       setTotalPliesToAnalyze(totalPlies);
@@ -91,7 +84,6 @@ export default function HomePage() {
         throw new Error('No moves found in PGN.');
       }
 
-      // Reconstruct FEN before and after for each move
       const replayChess = new Chess();
       const fenList: string[] = [replayChess.fen()];
       const moveSteps: Array<{
@@ -134,7 +126,7 @@ export default function HomePage() {
         fenList,
         14, // depth
         2,  // multiPV
-        (pct, cur, tot) => {
+        (pct, cur) => {
           if (!analysisAbortedRef.current) {
             setAnalysisProgress(pct);
             setCurrentPlyAnalyzing(cur);
@@ -194,10 +186,8 @@ export default function HomePage() {
           prevMoveAnalysis,
         });
 
-        // Determine opening name if book move
         const openingMatch = lookupOpening(step.fenAfter);
 
-        // Convert best move UCI to SAN using chess.js
         let bestSan = evalBeforeObj.bestMove || '';
         try {
           if (evalBeforeObj.bestMove && evalBeforeObj.bestMove.length >= 4) {
@@ -240,23 +230,19 @@ export default function HomePage() {
           pieceSacrificed: classificationResult.pieceSacrificed,
         };
 
-        // Generate heuristic tactical explanation
         moveAnalysis.explanation = generateHeuristicExplanation(moveAnalysis);
         analyzedMoves.push(moveAnalysis);
 
-        // Increment counts
         const colorKey = step.turn === 'w' ? 'white' : 'black';
         classificationsCount[colorKey][classificationResult.classification] =
           (classificationsCount[colorKey][classificationResult.classification] || 0) + 1;
       }
 
-      // Compute player overall accuracies & estimated Elos
       const whiteAccuracy = calculatePlayerAccuracy(analyzedMoves, 'w');
       const blackAccuracy = calculatePlayerAccuracy(analyzedMoves, 'b');
       const whiteEstimatedElo = estimateEloFromAccuracy(whiteAccuracy);
       const blackEstimatedElo = estimateEloFromAccuracy(blackAccuracy);
 
-      // Extract puzzles for companion Telegram Bot & persist in localStorage
       const puzzles = extractPuzzlesFromAnalysis(analyzedMoves, meta);
       savePuzzlesToLocalStorage(puzzles);
 
@@ -273,7 +259,7 @@ export default function HomePage() {
 
       setReviewReport(report);
       setGameState('reviewed');
-      setCurrentPly(1); // Jump to move 1
+      setCurrentPly(1);
     } catch (err: any) {
       console.error('Analysis failed:', err);
       alert(err.message || 'Game analysis failed.');
@@ -281,7 +267,6 @@ export default function HomePage() {
     }
   };
 
-  // Jump to first blunder or mistake for Retry mode
   const handleRetryMistakes = () => {
     if (!reviewReport) return;
     const firstMistake = reviewReport.moves.find((m) =>
@@ -297,26 +282,29 @@ export default function HomePage() {
     reviewReport && currentPly > 0 ? reviewReport.moves[currentPly - 1] : null;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-screen flex flex-col bg-[#090c15] text-slate-100">
       {/* Top Navbar */}
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
+      <header className="border-b border-white/[0.08] bg-[#0c101c]/90 backdrop-blur sticky top-0 z-40 px-4 sm:px-6 py-2.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20 text-white font-black text-lg">
-            ♞
+          <div className="w-7 h-7 rounded-lg bg-slate-900 border border-white/[0.1] flex items-center justify-center text-slate-200">
+            <svg
+              className="w-3.5 h-3.5 fill-current"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M19 22H5v-2h14v2M17.5 13.5c-.7 0-1.3.4-1.6 1-.3-.6-.9-1-1.6-1-.5 0-1 .2-1.3.6C12.7 13.5 12.3 13 11.8 13c-.9 0-1.7.6-1.9 1.4-.4-.3-.9-.4-1.4-.4-1.4 0-2.5 1.1-2.5 2.5 0 .2 0 .4.1.6-.7.4-1.1 1.1-1.1 1.9h14c0-.8-.4-1.5-1.1-1.9.1-.2.1-.4.1-.6 0-1.4-1.1-2.5-2.5-2.5zM19 9c0-.6-.4-1-1-1h-1.1C16.4 6.8 14.8 6 13 6c-.4 0-.8 0-1.2.1-.6-1.2-1.8-2.1-3.3-2.1-2 0-3.6 1.4-3.9 3.3C4.2 7.7 4 8.3 4 9c0 1.2.6 2.3 1.5 3 .5.4 1.1.7 1.8.8.4-1 1.4-1.8 2.7-1.8.7 0 1.3.2 1.8.6.6-.9 1.6-1.6 2.7-1.6 1.1 0 2.1.6 2.7 1.6.4-.3 1-.5 1.5-.5.7 0 1.3.3 1.8.8.9-.7 1.5-1.8 1.5-3z" />
+            </svg>
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="font-extrabold text-base sm:text-lg tracking-tight text-white">
-                Rewind<span className="text-sky-400">Board</span>
-              </h1>
-              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                <Cpu className="w-3 h-3" />
-                Stockfish 19 WASM
+              <span className="font-semibold text-sm tracking-tight text-white">
+                RewindBoard
+              </span>
+              <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-mono text-slate-400 bg-slate-900 border border-white/[0.06]">
+                <Activity className="w-2.5 h-2.5 text-emerald-400" />
+                Stockfish 19
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 hidden sm:block">
-              Zero-Ad Client-Side Chess Game Review & Tactical Coach
-            </p>
           </div>
         </div>
 
@@ -327,10 +315,10 @@ export default function HomePage() {
                 analysisAbortedRef.current = true;
                 setGameState('import');
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/[0.08] transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Import Another Game</span>
+              <span>New Analysis</span>
             </button>
           )}
 
@@ -338,9 +326,9 @@ export default function HomePage() {
             href="https://t.me/RewindChessBot"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 text-xs font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/[0.08] transition-colors"
           >
-            <Bot className="w-3.5 h-3.5" />
+            <Send className="w-3 h-3 text-slate-400" />
             <span className="hidden sm:inline">Telegram Bot</span>
           </a>
         </div>
@@ -350,22 +338,14 @@ export default function HomePage() {
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-start">
         {/* 1. Import Mode */}
         {gameState === 'import' && (
-          <div className="py-6 sm:py-12 space-y-8 animate-in fade-in duration-300">
-            <div className="text-center space-y-3 max-w-2xl mx-auto">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-medium">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>100% Free • No Subscription • Client-Side WASM</span>
-              </div>
-              <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
-                Chess Game Review, <br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 via-teal-300 to-indigo-400">
-                  Powered by Stockfish 19
-                </span>
-              </h2>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                Fetch games by Chess.com Username, Game URL, Lichess URL, or raw PGN.
-                Get instant Chess.com-style accuracy, brilliant moves, blunder alerts, and export
-                mistakes directly to Telegram.
+          <div className="py-8 sm:py-14 space-y-6">
+            <div className="text-center space-y-2 max-w-xl mx-auto">
+              <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
+                Chess Game Review
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed font-normal">
+                Analyze games with client-side Stockfish 19 WebAssembly. Accurate accuracy scores,
+                tactical breakdown, and mistake practice.
               </p>
             </div>
 
@@ -375,33 +355,30 @@ export default function HomePage() {
 
         {/* 2. Analyzing Mode */}
         {gameState === 'analyzing' && (
-          <div className="py-16 flex flex-col items-center justify-center space-y-6 max-w-lg mx-auto text-center animate-in fade-in duration-300">
-            <div className="relative">
-              <div className="w-20 h-20 rounded-2xl bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400 shadow-xl shadow-sky-500/20 animate-pulse">
-                <Cpu className="w-10 h-10 animate-spin" style={{ animationDuration: '4s' }} />
-              </div>
+          <div className="py-20 flex flex-col items-center justify-center space-y-5 max-w-md mx-auto text-center">
+            <div className="w-10 h-10 rounded-full bg-slate-900 border border-white/[0.1] flex items-center justify-center text-slate-200">
+              <Loader2 className="w-5 h-5 animate-spin text-slate-300" />
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-xl font-extrabold text-white">
-                Stockfish 19 Reviewing Positions...
-              </h3>
-              <p className="text-xs text-slate-400">
-                Evaluating position {currentPlyAnalyzing} of {totalPliesToAnalyze} plies in WebAssembly
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-white">
+                Evaluating Game Positions
+              </h2>
+              <p className="text-xs font-mono text-slate-400">
+                Move {currentPlyAnalyzing} of {totalPliesToAnalyze} • Stockfish 19
               </p>
             </div>
 
-            {/* Progress Bar */}
             <div className="w-full space-y-2">
-              <div className="w-full h-3 bg-slate-900 rounded-full overflow-hidden border border-slate-800 p-0.5">
+              <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-white/[0.06]">
                 <div
-                  className="h-full bg-gradient-to-r from-sky-500 to-emerald-400 rounded-full transition-all duration-200"
+                  className="h-full bg-slate-200 rounded-full transition-all duration-200"
                   style={{ width: `${analysisProgress}%` }}
                 />
               </div>
-              <div className="flex justify-between text-xs text-slate-500 font-mono">
-                <span>MultiPV: 2 • Depth: 14</span>
-                <span className="font-bold text-sky-400">{analysisProgress}%</span>
+              <div className="flex justify-between text-[11px] text-slate-500 font-mono">
+                <span>MultiPV 2 • Depth 14</span>
+                <span className="font-semibold text-slate-300">{analysisProgress}%</span>
               </div>
             </div>
 
@@ -410,39 +387,41 @@ export default function HomePage() {
                 analysisAbortedRef.current = true;
                 setGameState('import');
               }}
-              className="text-xs text-slate-500 hover:text-slate-300 underline pt-2"
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors pt-2"
             >
-              Cancel Analysis
+              Cancel
             </button>
           </div>
         )}
 
         {/* 3. Interactive Review Mode */}
         {gameState === 'reviewed' && reviewReport && (
-          <div className="space-y-4 animate-in fade-in duration-300">
+          <div className="space-y-4">
             {/* Game Meta Header */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-300">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-white/[0.08] rounded-xl px-4 py-2.5 text-xs text-slate-300">
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5 font-bold text-white text-sm">
+                <div className="flex items-center gap-1.5 font-semibold text-white">
                   <span>{reviewReport.metadata.white.username}</span>
                   <span className="text-slate-500 font-normal">vs</span>
                   <span>{reviewReport.metadata.black.username}</span>
                 </div>
                 {reviewReport.metadata.opening && (
-                  <span className="hidden sm:inline px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[11px] truncate max-w-xs">
+                  <span className="hidden sm:inline px-2 py-0.5 rounded bg-slate-950 text-slate-400 font-mono text-[11px] truncate max-w-xs border border-white/[0.06]">
                     {reviewReport.metadata.opening}
                   </span>
                 )}
               </div>
 
-              <div className="flex items-center gap-3 text-slate-400">
-                <span>Result: <strong className="text-white">{reviewReport.metadata.result}</strong></span>
+              <div className="flex items-center gap-3 text-slate-400 text-xs font-mono">
+                <span>
+                  Result: <strong className="text-white">{reviewReport.metadata.result}</strong>
+                </span>
                 {reviewReport.metadata.date && <span>• {reviewReport.metadata.date}</span>}
               </div>
             </div>
 
-            {/* 3-Column Responsive Layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* 2-Column Responsive Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
               {/* Left / Center: Interactive Board & Controls (lg:col-span-7) */}
               <div className="lg:col-span-7 flex flex-col items-center">
                 <ChessReviewBoard
@@ -456,8 +435,8 @@ export default function HomePage() {
                   className="w-full"
                 />
 
-                {/* Evaluation Graph underneath Board */}
-                <div className="w-full max-w-[540px] mt-4">
+                {/* Evaluation Graph */}
+                <div className="w-full max-w-[540px] mt-3">
                   <EvalGraph
                     moves={reviewReport.moves}
                     currentPly={currentPly}
@@ -467,45 +446,43 @@ export default function HomePage() {
               </div>
 
               {/* Right Column: Coach Banner, Tabs for Review Summary & Move List (lg:col-span-5) */}
-              <div className="lg:col-span-5 space-y-4">
-                {/* Coach Banner at top */}
+              <div className="lg:col-span-5 space-y-3">
                 <CoachBanner
                   currentMove={currentMove}
                   currentPly={currentPly}
                 />
 
-                {/* Right Column Tabs: Review Summary vs. Move List */}
-                <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <div className="flex items-center gap-2">
+                <div className="bg-slate-900/60 border border-white/[0.08] rounded-xl p-3.5 space-y-3">
+                  <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
+                    <div className="flex items-center gap-1.5 p-0.5 rounded-lg bg-slate-950 border border-white/[0.06]">
                       <button
                         onClick={() => setActiveRightTab('review')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
                           activeRightTab === 'review'
-                            ? 'bg-sky-500/20 text-sky-400 border border-sky-500/40'
+                            ? 'bg-slate-800 text-white shadow-sm'
                             : 'text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        Accuracy & Breakdown
+                        Summary
                       </button>
                       <button
                         onClick={() => setActiveRightTab('moves')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
                           activeRightTab === 'moves'
-                            ? 'bg-sky-500/20 text-sky-400 border border-sky-500/40'
+                            ? 'bg-slate-800 text-white shadow-sm'
                             : 'text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        Move List ({reviewReport.moves.length})
+                        Moves ({reviewReport.moves.length})
                       </button>
                     </div>
 
                     <button
                       onClick={() => setIsTelegramModalOpen(true)}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-400 hover:text-sky-300"
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-white transition-colors"
                     >
-                      <Bot className="w-3.5 h-3.5" />
-                      <span>Telegram Sync</span>
+                      <Send className="w-3 h-3 text-slate-400" />
+                      <span>Telegram</span>
                     </button>
                   </div>
 

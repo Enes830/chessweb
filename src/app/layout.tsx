@@ -1,10 +1,25 @@
 import type { Metadata } from 'next';
+import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 
+const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  variable: '--font-sans',
+  display: 'swap',
+  weight: ['400', '500', '600', '700', '800'],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono',
+  display: 'swap',
+  weight: ['400', '500', '600', '700'],
+});
+
 export const metadata: Metadata = {
-  title: 'RewindBoard | Chess Game Review & Analysis',
+  title: 'RewindBoard — Chess Game Review',
   description:
-    'Full Chess.com-style Game Review running 100% client-side in your browser with Stockfish 19 WebAssembly. Zero ads, zero tracking, instant accuracy and move classification.',
+    'Client-side Stockfish 19 game analysis. Accurate accuracy scores, move evaluations, and mistake trainer.',
 };
 
 export default function RootLayout({
@@ -13,8 +28,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-sky-500/30 selection:text-sky-200">
+    <html lang="en" className={`dark ${plusJakartaSans.variable} ${jetbrainsMono.variable}`}>
+      <body className="min-h-screen bg-[#0a0d14] text-slate-100 font-sans antialiased selection:bg-slate-700 selection:text-white">
         {children}
       </body>
     </html>

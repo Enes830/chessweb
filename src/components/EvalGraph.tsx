@@ -41,8 +41,6 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
     return null;
   }
 
-  // Build chart dataset from moves
-  // Ply 0 is start position (0.00 eval)
   const data: ChartPoint[] = [
     {
       ply: 0,
@@ -52,12 +50,11 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
       turn: 'w',
     },
     ...moves.map((m) => {
-      // Clamp pawn eval between -8 and +8 for readable chart scale
       let pawns = m.evalAfter / 100;
       if (m.isMateAfter && m.mateAfter) {
-        pawns = m.mateAfter > 0 ? 8 : -8;
+        pawns = m.mateAfter > 0 ? 7 : -7;
       }
-      const clamped = Math.max(-8, Math.min(8, pawns));
+      const clamped = Math.max(-7, Math.min(7, pawns));
       const meta = CLASSIFICATION_META[m.classification];
 
       return {
@@ -73,7 +70,6 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
     }),
   ];
 
-  // Custom Dot renderer for Blunders, Brilliancies, Mistakes, etc.
   const renderCustomDot = (props: any) => {
     const { cx, cy, payload } = props;
     if (!payload || payload.ply === 0) return <circle key={`dot-empty-${cx}-${cy}`} cx={cx} cy={cy} r={0} />;
@@ -82,7 +78,6 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
     const isBlunder = payload.classification === 'blunder';
     const isMistake = payload.classification === 'mistake';
     const isBrilliant = payload.classification === 'brilliant';
-    const isMissedWin = payload.classification === 'missed_win';
 
     if (isSelected) {
       return (
@@ -90,11 +85,10 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
           key={`dot-selected-${payload.ply}`}
           cx={cx}
           cy={cy}
-          r={6}
+          r={5}
           fill="#38bdf8"
           stroke="#ffffff"
           strokeWidth={2}
-          className="animate-pulse"
         />
       );
     }
@@ -105,10 +99,10 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
           key={`dot-brilliant-${payload.ply}`}
           cx={cx}
           cy={cy}
-          r={5}
-          fill="#1baca6"
+          r={4}
+          fill="#14b8a6"
           stroke="#ffffff"
-          strokeWidth={1.5}
+          strokeWidth={1}
         />
       );
     }
@@ -119,22 +113,22 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
           key={`dot-blunder-${payload.ply}`}
           cx={cx}
           cy={cy}
-          r={5}
-          fill="#ca3431"
+          r={4}
+          fill="#ef4444"
           stroke="#ffffff"
-          strokeWidth={1.5}
+          strokeWidth={1}
         />
       );
     }
 
-    if (isMistake || isMissedWin) {
+    if (isMistake) {
       return (
         <circle
           key={`dot-mistake-${payload.ply}`}
           cx={cx}
           cy={cy}
-          r={4}
-          fill="#e69d35"
+          r={3.5}
+          fill="#f97316"
           stroke="#ffffff"
           strokeWidth={1}
         />
@@ -145,28 +139,28 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
   };
 
   return (
-    <div className={`w-full bg-slate-900/90 rounded-lg p-3 border border-slate-800 ${className}`}>
-      <div className="flex items-center justify-between mb-2 px-1">
-        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Evaluation Graph
+    <div className={`w-full bg-slate-900/80 rounded-xl p-3 border border-white/[0.08] ${className}`}>
+      <div className="flex items-center justify-between mb-1.5 px-1">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+          Evaluation History
         </span>
-        <div className="flex items-center gap-3 text-[11px] text-slate-400">
+        <div className="flex items-center gap-2.5 text-[11px] text-slate-400 font-mono">
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-            Brilliant (!!)
+            <span className="w-2 h-2 rounded-full bg-teal-500 inline-block" />
+            <span>Brilliant</span>
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block" />
-            Mistake (?)
+            <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" />
+            <span>Mistake</span>
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />
-            Blunder (??)
+            <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+            <span>Blunder</span>
           </span>
         </div>
       </div>
 
-      <div className="w-full h-28 sm:h-32">
+      <div className="w-full h-24 sm:h-28">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
             data={data}
@@ -176,15 +170,15 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
                 onSelectPly(ply);
               }
             }}
-            margin={{ top: 8, right: 8, left: -24, bottom: 0 }}
+            margin={{ top: 6, right: 6, left: -24, bottom: 0 }}
           >
             <defs>
               <linearGradient id="evalGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.6} />
-                <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.05} />
+                <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.25} />
+                <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.02} />
               </linearGradient>
             </defs>
-            <ReferenceLine y={0} stroke="#475569" strokeDasharray="3 3" />
+            <ReferenceLine y={0} stroke="#334155" strokeDasharray="2 2" />
             <XAxis dataKey="ply" hide />
             <YAxis domain={[-6, 6]} hide />
             <Tooltip
@@ -194,20 +188,19 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
                   const evalStr =
                     pt.evalPawns > 0 ? `+${pt.evalPawns.toFixed(1)}` : pt.evalPawns.toFixed(1);
                   return (
-                    <div className="bg-slate-950 border border-slate-700/80 rounded-md p-2 shadow-xl text-xs space-y-1">
-                      <div className="font-semibold text-slate-200">{pt.moveLabel}</div>
+                    <div className="bg-slate-950 border border-white/[0.1] rounded-md px-2.5 py-1.5 shadow-xl text-xs space-y-0.5">
+                      <div className="font-medium text-slate-200">{pt.moveLabel}</div>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-emerald-400 font-bold">{evalStr}</span>
+                        <span className="font-mono text-slate-300 font-semibold">{evalStr}</span>
                         {pt.classification && (
                           <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                            className="px-1 py-0.2 rounded text-[10px] font-mono font-medium"
                             style={{
-                              backgroundColor: `${pt.badgeColor}25`,
+                              backgroundColor: `${pt.badgeColor}20`,
                               color: pt.badgeColor,
-                              border: `1px solid ${pt.badgeColor}60`,
                             }}
                           >
-                            {pt.badgeSymbol} {pt.classification}
+                            {pt.badgeSymbol}
                           </span>
                         )}
                       </div>
@@ -220,12 +213,12 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
             <Area
               type="monotone"
               dataKey="evalPawns"
-              stroke="#38bdf8"
-              strokeWidth={2}
+              stroke="#cbd5e1"
+              strokeWidth={1.5}
               fillOpacity={1}
               fill="url(#evalGradient)"
               dot={renderCustomDot}
-              activeDot={{ r: 5, fill: '#38bdf8', stroke: '#ffffff' }}
+              activeDot={{ r: 4, fill: '#38bdf8', stroke: '#ffffff' }}
             />
           </AreaChart>
         </ResponsiveContainer>
