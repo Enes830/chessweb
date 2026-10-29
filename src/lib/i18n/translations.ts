@@ -111,6 +111,36 @@ export interface TranslationDictionary {
   launchBot: string;
   downloadJson: string;
   close: string;
+
+  // Variations & Live Analysis
+  exploringVariation: string;
+  backToGame: string;
+  exitVariation: string;
+  playBestMove: string;
+  resetVariation: string;
+  variationFromMove: string;
+  candidateLines: string;
+  evalLabel: string;
+  engineBestLabel: string;
+  playedMoveLabel: string;
+  engineCalculating: string;
+
+  // Player Profile & Bookmarks
+  playerProfile: string;
+  rapid: string;
+  blitz: string;
+  bullet: string;
+  daily: string;
+  copyProfileLink: string;
+  linkCopied: string;
+  backToPlayerGames: string;
+  allGames: string;
+  reviewGame: string;
+  searchAnotherPlayer: string;
+  playerNotFound: string;
+  playerNotFoundDesc: string;
+  openPlayerPage: string;
+  bookmarkHint: string;
 }
 
 export const translations: Record<Locale, TranslationDictionary> = {
@@ -215,6 +245,34 @@ export const translations: Record<Locale, TranslationDictionary> = {
     launchBot: 'Open in Telegram',
     downloadJson: 'Download JSON',
     close: 'Close',
+
+    exploringVariation: 'Exploring Variation',
+    backToGame: 'Back to Game',
+    exitVariation: 'Exit Variation',
+    playBestMove: 'Play Best Move',
+    resetVariation: 'Reset Variation',
+    variationFromMove: 'Variation from Move {move}',
+    candidateLines: 'Candidate Moves',
+    evalLabel: 'Eval:',
+    engineBestLabel: 'Engine Best:',
+    playedMoveLabel: 'Played:',
+    engineCalculating: 'Calculating...',
+
+    playerProfile: 'Player Profile',
+    rapid: 'Rapid',
+    blitz: 'Blitz',
+    bullet: 'Bullet',
+    daily: 'Daily',
+    copyProfileLink: 'Copy Page Link',
+    linkCopied: 'Link Copied!',
+    backToPlayerGames: 'Back to {username}’s Games',
+    allGames: 'All',
+    reviewGame: 'Review Game',
+    searchAnotherPlayer: 'Search player or link...',
+    playerNotFound: 'Player Not Found',
+    playerNotFoundDesc: 'Could not find Chess.com player "{username}". Please verify the username and try again.',
+    openPlayerPage: 'Open Profile Page',
+    bookmarkHint: 'Bookmark this URL to access your games directly anytime!',
   },
   ar: {
     brandName: 'RewindBoard',
@@ -317,5 +375,33 @@ export const translations: Record<Locale, TranslationDictionary> = {
     launchBot: 'فتح في تيليجرام',
     downloadJson: 'تنزيل ملف JSON',
     close: 'إغلاق',
+
+    exploringVariation: 'استكشاف تفريع',
+    backToGame: 'العودة للمباراة',
+    exitVariation: 'إنهاء التفريع',
+    playBestMove: 'لعب أفضل نقلة',
+    resetVariation: 'إعادة تعيين التفريع',
+    variationFromMove: 'تفريع من النقلة {move}',
+    candidateLines: 'نقلات مرشحة',
+    evalLabel: 'التقييم:',
+    engineBestLabel: 'أفضل نقلة للمحرك:',
+    playedMoveLabel: 'لُعبت:',
+    engineCalculating: 'جاري الحساب...',
+
+    playerProfile: 'الملف الشخصي للاعب',
+    rapid: 'سريع (Rapid)',
+    blitz: 'خاطف (Blitz)',
+    bullet: 'رصاصة (Bullet)',
+    daily: 'يومي (Daily)',
+    copyProfileLink: 'نسخ رابط الصفحة',
+    linkCopied: 'تم نسخ الرابط!',
+    backToPlayerGames: 'العودة لمباريات {username}',
+    allGames: 'الكل',
+    reviewGame: 'مراجعة المباراة',
+    searchAnotherPlayer: 'ابحث عن لاعب أو رابط...',
+    playerNotFound: 'لم يتم العثور على اللاعب',
+    playerNotFoundDesc: 'تعذر العثور على حساب Chess.com للاعب "{username}". يرجى التأكد من اسم المستخدم.',
+    openPlayerPage: 'فتح صفحة اللاعب',
+    bookmarkHint: 'احفظ هذا الرابط في المفضلة للوصول إلى مبارياتك مباشرة في أي وقت!',
   },
 };

@@ -117,6 +117,7 @@ export interface RecentGameItem {
   url: string;
   date: string;
   timeControl: string;
+  timeClass?: string;
   white: { username: string; rating: number; result: string };
   black: { username: string; rating: number; result: string };
   userColor: 'w' | 'b';
@@ -138,3 +139,36 @@ export interface EngineEvalResult {
     pv: string[];
   }[];
 }
+
+export interface VariationMove {
+  san: string;
+  uci: string;
+  from: string;
+  to: string;
+  fenBefore: string;
+  fenAfter: string;
+  evalCp?: number;
+  mate?: number;
+  bestMoveUci?: string;
+  bestMoveSan?: string;
+  pv?: string[];
+}
+
+export interface ChessComProfile {
+  username: string;
+  name?: string;
+  avatar?: string;
+  title?: string;
+  country?: string;
+  joined?: number;
+  url?: string;
+  followers?: number;
+}
+
+export interface ChessComStats {
+  chess_rapid?: { last?: { rating: number; date?: number } };
+  chess_blitz?: { last?: { rating: number; date?: number } };
+  chess_bullet?: { last?: { rating: number; date?: number } };
+  chess_daily?: { last?: { rating: number; date?: number } };
+}
+

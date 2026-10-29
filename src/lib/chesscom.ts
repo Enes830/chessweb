@@ -1,10 +1,11 @@
-import { GameMetadata, RecentGameItem } from '@/types/chess';
+import { GameMetadata, RecentGameItem, ChessComProfile, ChessComStats } from '@/types/chess';
 import { Chess } from 'chess.js';
 
 export interface ChessComGameRecord {
   url: string;
   pgn: string;
   time_control: string;
+  time_class?: string;
   end_time: number;
   rated: boolean;
   white: {
@@ -120,6 +121,7 @@ export async function fetchChessComUserGames(username: string): Promise<RecentGa
       url: g.url,
       date: dateStr,
       timeControl: formatTimeControl(g.time_control),
+      timeClass: g.time_class,
       white: {
         username: g.white.username,
         rating: g.white.rating,
@@ -135,6 +137,53 @@ export async function fetchChessComUserGames(username: string): Promise<RecentGa
       pgn: g.pgn,
     };
   });
+}
+
+/**
+ * Fetches player profile details from Chess.com (avatar, title, joined, name)
+ */
+export async function fetchChessComUserProfile(username: string): Promise<ChessComProfile> {
+  const cleanUser = username.trim().toLowerCase();
+  const res = await fetch(`https://api.chess.com/pub/player/${cleanUser}`, {
+    headers: { 'User-Agent': 'RewindBoard-Chess-Review (contact: support@rewindboard.com)' },
+  });
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error(`Chess.com user "${username}" was not found.`);
+    }
+    throw new Error(`Failed to fetch profile for "${username}" (HTTP ${res.status})`);
+  }
+
+  const data = await res.json();
+  return {
+    username: data.username || username,
+    name: data.name,
+    avatar: data.avatar,
+    title: data.title,
+    country: data.country,
+    joined: data.joined,
+    url: data.url,
+    followers: data.followers,
+  };
+}
+
+/**
+ * Fetches player rating statistics from Chess.com (Rapid, Blitz, Bullet, Daily)
+ */
+export async function fetchChessComUserStats(username: string): Promise<ChessComStats> {
+  const cleanUser = username.trim().toLowerCase();
+  try {
+    const res = await fetch(`https://api.chess.com/pub/player/${cleanUser}/stats`, {
+      headers: { 'User-Agent': 'RewindBoard-Chess-Review (contact: support@rewindboard.com)' },
+    });
+    if (!res.ok) {
+      return {};
+    }
+    return await res.json();
+  } catch {
+    return {};
+  }
 }
 
 /**

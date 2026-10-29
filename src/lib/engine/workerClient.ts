@@ -11,6 +11,8 @@ interface QueuedTask {
   multiPV: number;
   resolve: (result: EngineEvalResult) => void;
   reject: (err: Error) => void;
+  isLive?: boolean;
+  onPartial?: (result: EngineEvalResult) => void;
 }
 
 export class StockfishWorkerClient {
@@ -228,6 +230,17 @@ export class StockfishWorkerClient {
     } else {
       this.currentEvalResult.multiPVEvals.push(pvData);
     }
+
+    if (this.currentTask?.onPartial && (this.currentEvalResult.bestMove || this.currentEvalResult.scoreCp !== undefined)) {
+      this.currentTask.onPartial({
+        depth: this.currentEvalResult.depth,
+        scoreCp: this.currentEvalResult.scoreCp,
+        mate: this.currentEvalResult.mate,
+        bestMove: this.currentEvalResult.bestMove,
+        pv: [...this.currentEvalResult.pv],
+        multiPVEvals: this.currentEvalResult.multiPVEvals ? [...this.currentEvalResult.multiPVEvals] : [],
+      });
+    }
   }
 
   public async evaluatePosition(
@@ -245,6 +258,45 @@ export class StockfishWorkerClient {
         resolve,
         reject,
       });
+
+      if (!this.isProcessing) {
+        this.processNextTask();
+      }
+    });
+  }
+
+  /**
+   * Fast, interactive evaluation designed for live variation board moves.
+   * Cancels prior live queries and streams partial depth progress.
+   */
+  public async evaluateLivePosition(
+    fen: string,
+    depth: number = 14,
+    multiPV: number = 3,
+    onPartial?: (result: EngineEvalResult) => void
+  ): Promise<EngineEvalResult> {
+    await this.waitReady();
+
+    // Cancel existing live task if in progress
+    if (this.currentTask?.isLive) {
+      this.send('stop');
+      this.currentTask = null;
+    }
+    // Remove stale live tasks
+    this.taskQueue = this.taskQueue.filter((t) => !t.isLive);
+
+    return new Promise<EngineEvalResult>((resolve, reject) => {
+      const task: QueuedTask = {
+        fen,
+        depth,
+        multiPV,
+        resolve,
+        reject,
+        isLive: true,
+        onPartial,
+      };
+
+      this.taskQueue.unshift(task);
 
       if (!this.isProcessing) {
         this.processNextTask();
@@ -272,15 +324,17 @@ export class StockfishWorkerClient {
         // If checkmated, the side to move lost (mate = 0 from side-to-move perspective)
         const whiteScoreCp = isMate ? (turn === 'w' ? -10000 : 10000) : 0;
         const whiteMate = isMate ? (turn === 'w' ? -1 : 1) : undefined;
-        this.currentTask = null;
-        currentTask.resolve({
+        const terminalResult: EngineEvalResult = {
           depth: 0,
           scoreCp: whiteScoreCp,
           mate: whiteMate,
           bestMove: '',
           pv: [],
           multiPVEvals: [],
-        });
+        };
+        currentTask.onPartial?.(terminalResult);
+        this.currentTask = null;
+        currentTask.resolve(terminalResult);
         this.processNextTask();
         return;
       }

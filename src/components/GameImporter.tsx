@@ -290,9 +290,18 @@ export const GameImporter: React.FC<GameImporterProps> = ({ onLoadGame, isLoadin
                   <span className="text-slate-400">{t('recentGamesTitle')}:</span>
                   <span className="font-semibold text-white font-mono">@{searchedUser}</span>
                 </div>
-                <span className="text-[11px] text-slate-500 font-mono">
-                  {recentGames.length}
-                </span>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`/${searchedUser}`}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-sans font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/[0.08] transition-colors"
+                  >
+                    <span>{t('openPlayerPage')}</span>
+                    <span className="text-emerald-400">↗</span>
+                  </a>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    ({recentGames.length})
+                  </span>
+                </div>
               </div>
 
               {recentGames.length === 0 && !isFetchingGames && (

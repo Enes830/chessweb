@@ -323,8 +323,16 @@ export default function HomePage() {
     >
       {/* Top Navbar */}
       <header className="border-b border-white/[0.08] bg-[#0c101c]/90 backdrop-blur sticky top-0 z-40 px-4 sm:px-6 py-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-slate-900 border border-white/[0.1] flex items-center justify-center text-slate-200">
+        <button
+          onClick={() => {
+            analysisAbortedRef.current = true;
+            setGameState('import');
+          }}
+          className="flex items-center gap-3 group text-left transition-opacity hover:opacity-85 cursor-pointer focus:outline-none"
+          title={t('brandName')}
+          aria-label={t('brandName')}
+        >
+          <div className="w-7 h-7 rounded-lg bg-slate-900 border border-white/[0.1] group-hover:border-emerald-500/50 flex items-center justify-center text-slate-200 transition-colors">
             <svg
               className="w-3.5 h-3.5 fill-current"
               viewBox="0 0 24 24"
@@ -335,7 +343,7 @@ export default function HomePage() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-sm tracking-tight text-white">
+              <span className="font-semibold text-sm tracking-tight text-white group-hover:text-emerald-400 transition-colors">
                 {t('brandName')}
               </span>
               <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-mono text-slate-400 bg-slate-900 border border-white/[0.06]">
@@ -344,7 +352,7 @@ export default function HomePage() {
               </span>
             </div>
           </div>
-        </div>
+        </button>
 
         <div className="flex items-center gap-2">
           {/* Language Switcher */}
