@@ -127,7 +127,7 @@ export default function HomePage() {
       const evalResults = await client.evaluateGamePositions(
         fenList,
         14, // depth
-        2,  // multiPV
+        3,  // multiPV (top 3 candidate lines for accurate WintrCat/Brilliant-Chess classification)
         (pct, cur) => {
           if (!analysisAbortedRef.current) {
             setAnalysisProgress(pct);
@@ -178,7 +178,7 @@ export default function HomePage() {
         if (match) {
           stepOpenings[i] = match.name;
           deepestOpeningName = match.name;
-          if (moveSteps[i].ply <= 16) {
+          if (moveSteps[i].ply <= 24) {
             lastBookIndex = i;
           }
         }
@@ -223,19 +223,28 @@ export default function HomePage() {
           forceBook: isBackfilledBook,
         });
 
-        let bestSan = evalBeforeObj.bestMove || '';
+        let bestUci =
+          evalBeforeObj.bestMove ||
+          evalBeforeObj.multiPVEvals?.[0]?.bestMove ||
+          '';
+        let bestSan = '';
         try {
-          if (evalBeforeObj.bestMove && evalBeforeObj.bestMove.length >= 4) {
-            const probe = new Chess(step.fenBefore);
+          const probe = new Chess(step.fenBefore);
+          if (bestUci && bestUci.length >= 4) {
             const m = probe.move({
-              from: evalBeforeObj.bestMove.slice(0, 2),
-              to: evalBeforeObj.bestMove.slice(2, 4),
-              promotion: evalBeforeObj.bestMove[4] || undefined,
+              from: bestUci.slice(0, 2),
+              to: bestUci.slice(2, 4),
+              promotion: bestUci[4] || undefined,
             });
             if (m) bestSan = m.san;
           }
+          if (!bestSan) {
+            bestUci = step.uci;
+            bestSan = step.san;
+          }
         } catch {
-          // Fallback
+          bestUci = bestUci || step.uci;
+          bestSan = bestSan || step.san;
         }
 
         const moveAnalysis: MoveAnalysis = {
@@ -257,9 +266,9 @@ export default function HomePage() {
           winPctBefore: classificationResult.winPctBefore,
           winPctAfter: classificationResult.winPctAfter,
           winPctLoss: classificationResult.winPctLoss,
-          bestMoveUci: evalBeforeObj.bestMove || '',
-          bestMoveSan: bestSan || evalBeforeObj.bestMove || '',
-          pv: evalBeforeObj.pv || [],
+          bestMoveUci: bestUci,
+          bestMoveSan: bestSan,
+          pv: evalBeforeObj.pv?.length ? evalBeforeObj.pv : [bestUci],
           classification: classificationResult.classification,
           openingName: stepOpenings[i],
           pieceSacrificed: classificationResult.pieceSacrificed,

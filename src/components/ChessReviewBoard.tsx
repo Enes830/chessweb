@@ -44,6 +44,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
   const totalPlies = moves.length;
   const currentMove = currentPly > 0 ? moves[currentPly - 1] : null;
+  const nextMove = currentPly < totalPlies ? moves[currentPly] : null;
 
   // Determine current FEN to display on board
   const boardFen = useMemo(() => {
@@ -96,34 +97,45 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   }, [currentPly, totalPlies, onSelectPly]);
 
   const customArrows: Arrow[] = useMemo(() => {
-    if (!currentMove) return [];
     const arrows: Arrow[] = [];
 
-    // 1. Played move arrow (using classification color)
-    if (currentMove.from && currentMove.to) {
+    // At starting position (ply 0), show the engine's best opening move arrow
+    if (!currentMove) {
+      if (nextMove?.bestMoveUci && nextMove.bestMoveUci.length >= 4) {
+        arrows.push({
+          startSquare: nextMove.bestMoveUci.slice(0, 2),
+          endSquare: nextMove.bestMoveUci.slice(2, 4),
+          color: 'rgba(16, 185, 129, 0.92)',
+        });
+      }
+      return arrows;
+    }
+
+    const bestUci = currentMove.bestMoveUci || currentMove.uci;
+    const isBestPlayed =
+      bestUci.length >= 4 && bestUci.slice(0, 4) === currentMove.uci.slice(0, 4);
+
+    // 1. Played move arrow (if different from engine best move, use classification color)
+    if (currentMove.from && currentMove.to && !isBestPlayed) {
       const meta = CLASSIFICATION_META[currentMove.classification];
       arrows.push({
         startSquare: currentMove.from,
         endSquare: currentMove.to,
-        color: meta.color + 'dd',
+        color: meta.color + 'cc',
       });
     }
 
-    // 2. Engine Best Move arrow (shown on EVERY move when played move != best move)
-    if (
-      currentMove.bestMoveUci &&
-      currentMove.bestMoveUci.length >= 4 &&
-      currentMove.bestMoveUci.slice(0, 4) !== currentMove.uci.slice(0, 4)
-    ) {
+    // 2. Engine Best Move arrow (ALWAYS shown on every move in bright emerald green)
+    if (bestUci && bestUci.length >= 4) {
       arrows.push({
-        startSquare: currentMove.bestMoveUci.slice(0, 2),
-        endSquare: currentMove.bestMoveUci.slice(2, 4),
-        color: 'rgba(16, 185, 129, 0.9)', // Emerald green for top engine move
+        startSquare: bestUci.slice(0, 2),
+        endSquare: bestUci.slice(2, 4),
+        color: 'rgba(16, 185, 129, 0.92)', // Emerald green for top engine move
       });
     }
 
     return arrows;
-  }, [currentMove]);
+  }, [currentMove, nextMove]);
 
   const squareRenderer = useCallback(
     ({
@@ -189,33 +201,52 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
         </div>
       </div>
 
-      {/* Engine Best Move Status Strip (shown on every move) */}
-      {currentMove && (
-        <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2 px-3 py-1.5 bg-slate-900/90 border border-white/[0.08] rounded-xl flex items-center justify-between text-xs font-mono shadow-sm">
-          <div className="flex items-center gap-2">
+      {/* Engine Best Move Status Strip (ALWAYS shown on every ply including ply 0) */}
+      {(currentMove || nextMove) && (
+        <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2 px-3 py-1.5 bg-slate-900/90 border border-white/[0.08] rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs font-mono shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-slate-400 font-sans font-medium flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-              {locale === 'ar' ? 'أفضل نقلة للمحرك:' : 'Best Move:'}
+              {locale === 'ar' ? 'أفضل نقلة للمحرك:' : 'Engine Best:'}
             </span>
-            <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 tracking-wide">
-              {currentMove.bestMoveSan || currentMove.bestMoveUci}
+            <span className="text-emerald-400 font-bold bg-emerald-500/15 px-2 py-0.5 rounded border border-emerald-500/30 tracking-wide">
+              {currentMove
+                ? currentMove.bestMoveSan || currentMove.bestMoveUci || currentMove.san
+                : nextMove?.bestMoveSan || nextMove?.bestMoveUci || 'e4'}
             </span>
-            {currentMove.bestMoveUci.slice(0, 4) === currentMove.uci.slice(0, 4) ? (
-              <span className="text-[10px] text-emerald-300 font-sans bg-emerald-500/20 px-1.5 py-0.5 rounded font-semibold border border-emerald-500/30">
-                ✓ {locale === 'ar' ? 'أفضل نقلة ملعوبة' : 'Best Move Played'}
-              </span>
-            ) : (
-              <span className="text-[10px] text-slate-400 font-sans hidden sm:inline">
-                ({locale === 'ar' ? 'ملعوبة:' : 'Played:'} <span className="text-slate-200 font-mono font-medium">{currentMove.san}</span>)
+            {currentMove && (
+              currentMove.bestMoveUci.slice(0, 4) === currentMove.uci.slice(0, 4) ? (
+                <span className="text-[10px] text-emerald-300 font-sans bg-emerald-500/20 px-1.5 py-0.5 rounded font-semibold border border-emerald-500/30">
+                  ✓ {locale === 'ar' ? 'أفضل نقلة ملعوبة' : 'Played'}
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400 font-sans">
+                  ({locale === 'ar' ? 'لُعبت:' : 'Played:'}{' '}
+                  <span className="text-slate-200 font-mono font-semibold">{currentMove.san}</span>)
+                </span>
+              )
+            )}
+            {currentMove && nextMove && (nextMove.bestMoveSan || nextMove.bestMoveUci) && (
+              <span className="text-[10px] text-slate-400 font-sans pl-1 border-l border-white/[0.08]">
+                {locale === 'ar' ? 'الرد الأفضل:' : 'Next Best:'}{' '}
+                <span className="text-sky-400 font-mono font-bold">
+                  {nextMove.bestMoveSan || nextMove.bestMoveUci}
+                </span>
               </span>
             )}
           </div>
           <div className="text-slate-400 text-[11px] shrink-0">
             {locale === 'ar' ? 'التقييم:' : 'Eval:'}{' '}
             <span className="font-semibold text-slate-200">
-              {currentMove.isMateAfter
-                ? (currentMove.mateAfter && currentMove.mateAfter > 0 ? `M${currentMove.mateAfter}` : `-M${Math.abs(currentMove.mateAfter || 1)}`)
-                : (currentMove.evalAfter > 0 ? `+${(currentMove.evalAfter / 100).toFixed(1)}` : (currentMove.evalAfter / 100).toFixed(1))}
+              {currentMove
+                ? currentMove.isMateAfter
+                  ? currentMove.mateAfter && currentMove.mateAfter > 0
+                    ? `M${currentMove.mateAfter}`
+                    : `-M${Math.abs(currentMove.mateAfter || 1)}`
+                  : currentMove.evalAfter > 0
+                    ? `+${(currentMove.evalAfter / 100).toFixed(1)}`
+                    : (currentMove.evalAfter / 100).toFixed(1)
+                : '+0.2'}
             </span>
           </div>
         </div>

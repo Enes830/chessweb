@@ -106,7 +106,15 @@ export const MoveList: React.FC<MoveListProps> = ({
                   }`}
                   dir="ltr"
                 >
-                  <span className="truncate">{row.white.san}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="truncate">{row.white.san}</span>
+                    <span
+                      className="text-[10px] text-emerald-400/80 font-normal truncate"
+                      title={`Engine Best: ${row.white.bestMoveSan || row.white.bestMoveUci}`}
+                    >
+                      ({row.white.bestMoveSan || row.white.bestMoveUci})
+                    </span>
+                  </div>
                   {renderBadge(row.white)}
                 </button>
               ) : (
@@ -125,7 +133,15 @@ export const MoveList: React.FC<MoveListProps> = ({
                   }`}
                   dir="ltr"
                 >
-                  <span className="truncate">{row.black.san}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="truncate">{row.black.san}</span>
+                    <span
+                      className="text-[10px] text-emerald-400/80 font-normal truncate"
+                      title={`Engine Best: ${row.black.bestMoveSan || row.black.bestMoveUci}`}
+                    >
+                      ({row.black.bestMoveSan || row.black.bestMoveUci})
+                    </span>
+                  </div>
                   {renderBadge(row.black)}
                 </button>
               ) : (

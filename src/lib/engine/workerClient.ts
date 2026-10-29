@@ -1,3 +1,4 @@
+import { Chess } from 'chess.js';
 import { EngineEvalResult } from '@/types/chess';
 
 export interface EvalProgressCallback {
@@ -27,7 +28,7 @@ export class StockfishWorkerClient {
     multiPVEvals: [],
   };
   private isTerminated: boolean = false;
-  private currentMultiPV: number = 2;
+  private currentMultiPV: number = 3;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -37,10 +38,13 @@ export class StockfishWorkerClient {
 
   private initWorker() {
     try {
-      this.worker = new Worker('/engine/stockfish.js');
+      this.worker = new Worker('/engine/stockfish.js#/engine/stockfish.wasm');
       this.worker.onmessage = (event: MessageEvent) => {
-        const line = typeof event.data === 'string' ? event.data : '';
-        this.handleUciLine(line);
+        const raw = typeof event.data === 'string' ? event.data : '';
+        const lines = raw.split(/\r?\n/);
+        for (const line of lines) {
+          this.handleUciLine(line);
+        }
       };
 
       this.worker.onerror = (err) => {
@@ -51,7 +55,7 @@ export class StockfishWorkerClient {
       this.send('uci');
       this.send('setoption name Threads value 1');
       this.send('setoption name Hash value 32');
-      this.send('setoption name MultiPV value 2');
+      this.send('setoption name MultiPV value 3');
       this.send('isready');
     } catch (e) {
       console.error('Failed to instantiate Stockfish worker:', e);
@@ -94,12 +98,35 @@ export class StockfishWorkerClient {
     // Search finished for current position
     if (line.startsWith('bestmove')) {
       const parts = line.split(/\s+/);
-      const bestMove = parts[1] || '';
-      if (!this.currentEvalResult.bestMove && bestMove !== '(none)') {
-        this.currentEvalResult.bestMove = bestMove;
+      const uciBestMove = parts[1] || '';
+
+      // Prefer multipv 1's best move if present, otherwise use bestmove token
+      const pv1Move = this.currentEvalResult.multiPVEvals?.find((p) => p.pvIndex === 1)?.bestMove;
+      if (pv1Move) {
+        this.currentEvalResult.bestMove = pv1Move;
+      } else if (uciBestMove && uciBestMove !== '(none)') {
+        this.currentEvalResult.bestMove = uciBestMove;
       }
 
       if (this.currentTask) {
+        // Fallback: if bestMove is still empty on a non-terminal position, pick the first legal move
+        if (!this.currentEvalResult.bestMove) {
+          try {
+            const chess = new Chess(this.currentTask.fen);
+            const legalMoves = chess.moves({ verbose: true });
+            if (legalMoves.length > 0) {
+              const first = legalMoves[0];
+              const fallbackUci = `${first.from}${first.to}${first.promotion || ''}`;
+              this.currentEvalResult.bestMove = fallbackUci;
+              if (this.currentEvalResult.pv.length === 0) {
+                this.currentEvalResult.pv = [fallbackUci];
+              }
+            }
+          } catch {
+            // Terminal or invalid FEN
+          }
+        }
+
         // Sort multiPV evals by pvIndex
         if (this.currentEvalResult.multiPVEvals) {
           this.currentEvalResult.multiPVEvals.sort((a, b) => a.pvIndex - b.pvIndex);
@@ -114,11 +141,9 @@ export class StockfishWorkerClient {
   }
 
   private parseInfoLine(line: string) {
-    // Ignore partial aspiration window fail-high / fail-low bound lines if we already have a full eval
-    if (
-      (line.includes('upperbound') || line.includes('lowerbound')) &&
-      this.currentEvalResult.depth > 0
-    ) {
+    // Ignore partial aspiration window fail-high / fail-low bound lines
+    const isBound = line.includes('upperbound') || line.includes('lowerbound');
+    if (isBound && this.currentEvalResult.depth > 0) {
       return;
     }
 
@@ -167,18 +192,24 @@ export class StockfishWorkerClient {
       scoreCp = mate > 0 ? (10000 - Math.abs(mate) * 100) : (-10000 + Math.abs(mate) * 100);
     }
 
-    // Update main eval if multipv === 1
-    if (multiPV === 1) {
+    // Update main eval if multipv === 1 and depth has progressed
+    if (multiPV === 1 && depth >= this.currentEvalResult.depth) {
       this.currentEvalResult.depth = depth;
-      this.currentEvalResult.scoreCp = scoreCp;
+      if (scoreCp !== undefined) this.currentEvalResult.scoreCp = scoreCp;
       this.currentEvalResult.mate = mate;
       if (bestMove) {
         this.currentEvalResult.bestMove = bestMove;
       }
-      this.currentEvalResult.pv = pvMoves;
+      if (pvMoves.length > 0) {
+        this.currentEvalResult.pv = pvMoves;
+      }
     }
 
-    // Track multiPV results
+    // Only record MultiPV lines that actually carry a move (or terminal depth 0)
+    if (!bestMove && depth > 0) {
+      return;
+    }
+
     if (!this.currentEvalResult.multiPVEvals) {
       this.currentEvalResult.multiPVEvals = [];
     }
@@ -188,8 +219,8 @@ export class StockfishWorkerClient {
       pvIndex: multiPV,
       scoreCp,
       mate,
-      bestMove,
-      pv: pvMoves,
+      bestMove: bestMove || this.currentEvalResult.multiPVEvals[existingPvIdx]?.bestMove || '',
+      pv: pvMoves.length > 0 ? pvMoves : (this.currentEvalResult.multiPVEvals[existingPvIdx]?.pv || []),
     };
 
     if (existingPvIdx >= 0) {
@@ -202,7 +233,7 @@ export class StockfishWorkerClient {
   public async evaluatePosition(
     fen: string,
     depth: number = 14,
-    multiPV: number = 2
+    multiPV: number = 3
   ): Promise<EngineEvalResult> {
     await this.waitReady();
 
@@ -229,7 +260,34 @@ export class StockfishWorkerClient {
     }
 
     this.isProcessing = true;
-    this.currentTask = this.taskQueue.shift()!;
+    const currentTask = this.taskQueue.shift()!;
+    this.currentTask = currentTask;
+
+    // Check if position is already terminal (checkmate / stalemate / draw) before querying engine
+    try {
+      const checkChess = new Chess(currentTask.fen);
+      if (checkChess.isGameOver()) {
+        const turn = checkChess.turn();
+        const isMate = checkChess.isCheckmate();
+        // If checkmated, the side to move lost (mate = 0 from side-to-move perspective)
+        const whiteScoreCp = isMate ? (turn === 'w' ? -10000 : 10000) : 0;
+        const whiteMate = isMate ? (turn === 'w' ? -1 : 1) : undefined;
+        this.currentTask = null;
+        currentTask.resolve({
+          depth: 0,
+          scoreCp: whiteScoreCp,
+          mate: whiteMate,
+          bestMove: '',
+          pv: [],
+          multiPVEvals: [],
+        });
+        this.processNextTask();
+        return;
+      }
+    } catch {
+      // Proceed to engine if FEN check fails
+    }
+
     this.currentEvalResult = {
       depth: 0,
       scoreCp: 0,
@@ -238,12 +296,12 @@ export class StockfishWorkerClient {
       multiPVEvals: [],
     };
 
-    if (this.currentTask.multiPV !== this.currentMultiPV) {
-      this.currentMultiPV = this.currentTask.multiPV;
-      this.send(`setoption name MultiPV value ${this.currentTask.multiPV}`);
+    if (currentTask.multiPV !== this.currentMultiPV) {
+      this.currentMultiPV = currentTask.multiPV;
+      this.send(`setoption name MultiPV value ${currentTask.multiPV}`);
     }
-    this.send(`position fen ${this.currentTask.fen}`);
-    this.send(`go depth ${this.currentTask.depth}`);
+    this.send(`position fen ${currentTask.fen}`);
+    this.send(`go depth ${currentTask.depth}`);
   }
 
   public stopAndClearQueue() {
@@ -272,9 +330,14 @@ export class StockfishWorkerClient {
   public async evaluateGamePositions(
     fens: string[],
     depth: number = 14,
-    multiPV: number = 2,
+    multiPV: number = 3,
     onProgress?: EvalProgressCallback
   ): Promise<EngineEvalResult[]> {
+    // Reset engine hash table for clean deterministic evaluation of the game
+    this.send('ucinewgame');
+    this.isReady = false;
+    await this.waitReady();
+
     const results: EngineEvalResult[] = [];
     const total = fens.length;
 

@@ -1,4 +1,5 @@
 import { Chess } from 'chess.js';
+import openingsData from './openingsData.json';
 
 /**
  * Comprehensive ECO Opening Book by FEN position prefix (piece placement + active turn)
@@ -349,14 +350,37 @@ export function getFenPrefix(fen: string): string {
 }
 
 const OPENING_MAP = new Map<string, OpeningDefinition>();
+const BOARD_ONLY_MAP = new Map<string, OpeningDefinition>();
 
 function buildOpeningBook(): void {
   if (OPENING_MAP.size > 0) return;
 
-  for (const op of BASE_OPENINGS) {
-    OPENING_MAP.set(op.fenPrefix, op);
+  // 1. Load 3,402 WintrCat/freechess ECO openings (keyed by piece placement or FEN prefix)
+  for (const entry of openingsData as Array<{ name: string; fen: string }>) {
+    const parts = entry.fen.trim().split(/\s+/);
+    const boardPart = parts[0];
+    if (!boardPart) continue;
+    const def: OpeningDefinition = {
+      eco: 'BOOK',
+      name: entry.name,
+      fenPrefix: parts.length >= 2 ? `${parts[0]} ${parts[1]}` : boardPart,
+    };
+    BOARD_ONLY_MAP.set(boardPart, def);
+    if (parts.length >= 2) {
+      OPENING_MAP.set(`${parts[0]} ${parts[1]}`, def);
+    }
   }
 
+  // 2. Load base opening definitions
+  for (const op of BASE_OPENINGS) {
+    OPENING_MAP.set(op.fenPrefix, op);
+    const boardPart = op.fenPrefix.split(' ')[0];
+    if (boardPart && !BOARD_ONLY_MAP.has(boardPart)) {
+      BOARD_ONLY_MAP.set(boardPart, op);
+    }
+  }
+
+  // 3. Load and index every intermediate ply along ECO lines
   for (const [eco, name, movesStr] of OPENING_LINES) {
     const chess = new Chess();
     const moves = movesStr.trim().split(/\s+/);
@@ -365,8 +389,13 @@ function buildOpeningBook(): void {
         const moved = chess.move(moves[i]);
         if (!moved) break;
         const prefix = getFenPrefix(chess.fen());
+        const boardPart = prefix.split(' ')[0];
         if (i === moves.length - 1 || !OPENING_MAP.has(prefix)) {
-          OPENING_MAP.set(prefix, { eco, name, fenPrefix: prefix });
+          const def = { eco, name, fenPrefix: prefix };
+          OPENING_MAP.set(prefix, def);
+          if (boardPart && !BOARD_ONLY_MAP.has(boardPart)) {
+            BOARD_ONLY_MAP.set(boardPart, def);
+          }
         }
       } catch {
         break;
@@ -385,5 +414,9 @@ export const OPENINGS: OpeningDefinition[] = Array.from(OPENING_MAP.values());
 export function lookupOpening(fen: string): OpeningDefinition | null {
   buildOpeningBook();
   const prefix = getFenPrefix(fen);
-  return OPENING_MAP.get(prefix) || null;
+  const exactMatch = OPENING_MAP.get(prefix);
+  if (exactMatch) return exactMatch;
+
+  const boardPart = fen.trim().split(/\s+/)[0] || '';
+  return BOARD_ONLY_MAP.get(boardPart) || null;
 }

@@ -107,124 +107,274 @@ export function calculateMoveAccuracy(winPctLoss: number): number {
 }
 
 /**
- * Calculates player overall accuracy as average of move accuracies
+ * Classification weight values from WintrCat/freechess (used alongside CAPS win% accuracy)
+ */
+const CLASSIFICATION_WEIGHTS: Record<MoveClassification, number> = {
+  brilliant: 1,
+  great: 1,
+  best: 1,
+  book: 1,
+  excellent: 0.92,
+  good: 0.72,
+  inaccuracy: 0.45,
+  missed_win: 0.25,
+  mistake: 0.2,
+  blunder: 0,
+};
+
+/**
+ * Calculates player overall accuracy combining CAPS exponential win% accuracy and WintrCat classification weights
  */
 export function calculatePlayerAccuracy(moves: MoveAnalysis[], color: 'w' | 'b'): number {
   const playerMoves = moves.filter((m) => m.turn === color);
   if (playerMoves.length === 0) return 100;
 
   const total = playerMoves.reduce((acc, m) => {
-    return acc + calculateMoveAccuracy(m.winPctLoss);
+    const capsAcc = calculateMoveAccuracy(m.winPctLoss);
+    const weightAcc = (CLASSIFICATION_WEIGHTS[m.classification] ?? 0.7) * 100;
+    return acc + (capsAcc * 0.7 + weightAcc * 0.3);
   }, 0);
 
   return Math.round((total / playerMoves.length) * 10) / 10;
 }
 
 /**
- * Estimates Elo performance from overall accuracy
+ * Estimates Elo performance from overall accuracy (quantized to nearest 50)
  */
 export function estimateEloFromAccuracy(accuracy: number): number {
   if (accuracy >= 98) return 2850;
   if (accuracy <= 40) return 400;
-  const est = Math.round(350 + 26.5 * accuracy);
-  return Math.min(3000, Math.max(400, est));
+  const est = 350 + 26.5 * accuracy;
+  const rounded = Math.round(est / 50) * 50;
+  return Math.min(3000, Math.max(400, rounded));
+}
+
+/* ============================================================================
+   Open-Source Classification Curve & Board Analysis
+   Adapted from:
+   1. WintrCat/freechess (src/lib/classification.ts, src/lib/board.ts, src/lib/analysis.ts)
+   2. wdeloo/Brilliant-Chess & T-Julsgaard/Chess-Review (analysis.js)
+   ============================================================================ */
+
+export const PIECE_VALUES: Record<string, number> = {
+  p: 1,
+  n: 3,
+  b: 3,
+  r: 5,
+  q: 9,
+  k: Infinity,
+  m: 0,
+};
+
+const SAC_VAL: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+
+export interface InfluencingPiece {
+  square: Square;
+  color: 'w' | 'b';
+  type: string;
+}
+
+const PROMOTIONS: Array<'b' | 'n' | 'r' | 'q' | undefined> = [undefined, 'b', 'n', 'r', 'q'];
+
+const CENTIPAWN_CLASSIFICATIONS: MoveClassification[] = [
+  'best',
+  'excellent',
+  'good',
+  'inaccuracy',
+  'mistake',
+  'blunder',
+];
+
+/**
+ * WintrCat/freechess quadratic evaluation loss threshold curve (in centipawns)
+ * Scales permissible centipawn loss dynamically with the magnitude of previous evaluation.
+ */
+export function getEvaluationLossThreshold(
+  classif: MoveClassification,
+  prevEval: number
+): number {
+  const absEval = Math.abs(prevEval);
+  let threshold = 0;
+
+  switch (classif) {
+    case 'best':
+      threshold = 0.0001 * Math.pow(absEval, 2) + 0.0236 * absEval - 3.7143;
+      break;
+    case 'excellent':
+      threshold = 0.0002 * Math.pow(absEval, 2) + 0.1231 * absEval + 27.5455;
+      break;
+    case 'good':
+      threshold = 0.0002 * Math.pow(absEval, 2) + 0.2643 * absEval + 60.5455;
+      break;
+    case 'inaccuracy':
+      threshold = 0.0002 * Math.pow(absEval, 2) + 0.3624 * absEval + 108.0909;
+      break;
+    case 'mistake':
+      threshold = 0.0003 * Math.pow(absEval, 2) + 0.4027 * absEval + 225.8182;
+      break;
+    default:
+      threshold = Infinity;
+  }
+
+  return Math.max(threshold, 0);
+}
+
+function oppColor(c: 'w' | 'b'): 'w' | 'b' {
+  return c === 'w' ? 'b' : 'w';
+}
+
+function setFenTurn(fen: string, color: 'w' | 'b'): string {
+  const fields = fen.trim().split(/\s+/);
+  if (fields.length >= 4) {
+    fields[1] = color;
+    fields[3] = '-';
+  }
+  return fields.join(' ');
 }
 
 /**
- * Checks if a move was a genuine material sacrifice (for Brilliant move detection)
+ * WintrCat/freechess getAttackers: returns all enemy pieces that attack `square` in `fen`.
  */
-export function isMaterialSacrifice(
-  fenBefore: string,
-  fenAfter: string,
-  move: { from: string; to: string; san?: string },
-  turn: 'w' | 'b'
-): boolean {
+export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
+  const attackers: InfluencingPiece[] = [];
   try {
-    const chessBefore = new Chess(fenBefore);
-    const chessAfter = new Chess(fenAfter);
+    const board = new Chess(fen);
+    const piece = board.get(square);
+    if (!piece) return [];
 
-    // Moves escaping check cannot be considered voluntary sacrifices
-    if (chessBefore.inCheck()) return false;
-
-    // Checkmates are terminal victories, not sacrifices
-    if (chessAfter.isCheckmate()) return false;
-
-    // Pawn promotions are material gains, not sacrifices
-    if (move.san && move.san.includes('=')) return false;
-
-    const oppColor = turn === 'w' ? 'b' : 'w';
-    const pieceValues: Record<string, number> = {
-      p: 1,
-      n: 3,
-      b: 3,
-      r: 5,
-      q: 9,
-      k: 0,
-    };
-
-    const fromSquare = move.from as Square;
-    const toSquare = move.to as Square;
-
-    const pieceMoved = chessBefore.get(fromSquare);
-    if (!pieceMoved || pieceMoved.type === 'k') return false;
-
-    const movedVal = pieceValues[pieceMoved.type] || 0;
-    const capturedPiece = chessBefore.get(toSquare);
-    const capturedVal = capturedPiece ? (pieceValues[capturedPiece.type] || 0) : 0;
-
-    // 1. Direct Piece or Exchange Sacrifice
-    // The piece moved to a square directly attacked by opponent
-    const oppMoves = chessAfter.moves({ verbose: true });
-    const directCaptures = oppMoves.filter((m) => m.to === toSquare);
-
-    if (directCaptures.length > 0) {
-      const minAttackerVal = Math.min(
-        ...directCaptures.map((m) => pieceValues[m.piece] || 1)
-      );
-
-      // A: Attacked by a lower-value piece (e.g. minor piece attacked by pawn, rook by minor/pawn, queen by rook/minor/pawn)
-      if (movedVal >= 3 && minAttackerVal < movedVal && capturedVal < movedVal) {
-        return true;
+    const enemyColor = oppColor(piece.color);
+    const attackerSquares = board.attackers(square, enemyColor);
+    for (const sq of attackerSquares) {
+      const p = board.get(sq);
+      if (p) {
+        attackers.push({
+          square: sq,
+          color: p.color,
+          type: p.type,
+        });
       }
+    }
+  } catch {
+    // Ignore invalid FEN states
+  }
+  return attackers;
+}
 
-      // B: Major or minor piece left hanging / undefended
-      const isDefended = chessAfter.isAttacked(toSquare, turn);
-      if (movedVal >= 3 && !isDefended && capturedVal < movedVal) {
-        return true;
-      }
+/**
+ * WintrCat/freechess getDefenders: returns all friendly pieces defending `square` in `fen`.
+ */
+export function getDefenders(fen: string, square: Square): InfluencingPiece[] {
+  try {
+    const board = new Chess(fen);
+    const piece = board.get(square);
+    if (!piece) return [];
 
-      // C: Exchange sacrifice (giving up Rook for minor piece, net >= 2 pawn deficit)
-      if (movedVal === 5 && capturedVal <= 3 && minAttackerVal <= 3) {
-        return true;
+    const testAttacker = getAttackers(fen, square)[0];
+    if (testAttacker) {
+      try {
+        const flippedBoard = new Chess(setFenTurn(fen, testAttacker.color));
+        for (const promotion of PROMOTIONS) {
+          try {
+            const moved = flippedBoard.move({
+              from: testAttacker.square,
+              to: square,
+              promotion,
+            });
+            if (moved) {
+              return getAttackers(flippedBoard.fen(), square);
+            }
+          } catch {
+            // Try next promotion
+          }
+        }
+      } catch {
+        // Fallback to direct attackers check
       }
     }
 
-    // 2. Discovered / Quiet sacrifice: leaving another major/minor piece hanging
-    const board = chessAfter.board();
-    for (let r = 0; r < 8; r++) {
-      for (let c = 0; c < 8; c++) {
-        const p = board[r][c];
-        if (
-          p &&
-          p.color === turn &&
-          (p.type === 'n' || p.type === 'b' || p.type === 'r' || p.type === 'q')
-        ) {
-          const sq = p.square;
-          if (sq !== toSquare) {
-            const val = pieceValues[p.type] || 0;
-            const attackedBefore = chessBefore.isAttacked(sq, oppColor);
-            const attackedAfter = chessAfter.isAttacked(sq, oppColor);
-            const defendedAfter = chessAfter.isAttacked(sq, turn);
-
-            if (!attackedBefore && attackedAfter && !defendedAfter && val >= 3) {
-              const oppCanCapture = oppMoves.some((m) => m.to === sq);
-              if (oppCanCapture) {
-                return true;
-              }
-            }
-          }
-        }
+    // Direct defenders via chess.js attackers() for friendly color
+    const defenderSquares = board.attackers(square, piece.color);
+    const defenders: InfluencingPiece[] = [];
+    for (const sq of defenderSquares) {
+      const p = board.get(sq);
+      if (p) {
+        defenders.push({
+          square: sq,
+          color: p.color,
+          type: p.type,
+        });
       }
+    }
+    return defenders;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * WintrCat/freechess isPieceHanging: checks whether the piece on `square` in `fen` is hanging
+ * compared to `lastFen`.
+ */
+export function isPieceHanging(lastFen: string, fen: string, square: Square): boolean {
+  try {
+    const lastBoard = new Chess(lastFen);
+    const board = new Chess(fen);
+
+    const lastPiece = lastBoard.get(square) || { type: 'm', color: '' as any };
+    const piece = board.get(square);
+    if (!piece) return false;
+
+    const attackers = getAttackers(fen, square);
+    if (attackers.length === 0) return false;
+
+    const defenders = getDefenders(fen, square);
+
+    // If piece was just traded equally or better on this square, not hanging
+    if (
+      PIECE_VALUES[lastPiece.type] >= PIECE_VALUES[piece.type] &&
+      lastPiece.color !== piece.color
+    ) {
+      return false;
+    }
+
+    // If a rook took a minor piece that was only defended by one other minor piece,
+    // it was a favorable rook exchange, so rook is not hanging
+    if (
+      piece.type === 'r' &&
+      PIECE_VALUES[lastPiece.type] === 3 &&
+      attackers.every((atk) => PIECE_VALUES[atk.type] === 3) &&
+      attackers.length === 1
+    ) {
+      return false;
+    }
+
+    // If piece has an attacker of lower value, it is hanging
+    if (attackers.some((atk) => PIECE_VALUES[atk.type] < PIECE_VALUES[piece.type])) {
+      return true;
+    }
+
+    if (attackers.length > defenders.length) {
+      let minAttackerValue = Infinity;
+      for (const attacker of attackers) {
+        minAttackerValue = Math.min(PIECE_VALUES[attacker.type], minAttackerValue);
+      }
+
+      // If taking the piece even though it has more attackers than defenders
+      // would be a sacrifice in itself, not hanging
+      if (
+        PIECE_VALUES[piece.type] < minAttackerValue &&
+        defenders.some((dfn) => PIECE_VALUES[dfn.type] < minAttackerValue)
+      ) {
+        return false;
+      }
+
+      // If any of the piece's defenders are pawns, then the sacrificed piece
+      // is the defending pawn.
+      if (defenders.some((dfn) => PIECE_VALUES[dfn.type] === 1)) {
+        return false;
+      }
+
+      return true;
     }
 
     return false;
@@ -233,8 +383,276 @@ export function isMaterialSacrifice(
   }
 }
 
+/* ============================================================================
+   Static Exchange Evaluation (SEE) from wdeloo/Brilliant-Chess (MIT)
+   ============================================================================ */
+
+interface ExchangeBudget {
+  nodes: number;
+  maxNodes: number;
+  memo?: Map<string, number>;
+  captureMemo?: Map<string, number>;
+}
+
+function exchangeGain(chess: Chess, square: Square, budget: ExchangeBudget): number | null {
+  const memo = budget.memo || (budget.memo = new Map());
+  const key = chess.fen().split(' ').slice(0, 4).join(' ') + ':' + square;
+  if (memo.has(key)) return memo.get(key)!;
+  if (++budget.nodes > budget.maxNodes) return null;
+  if (!chess.get(square) || !chess.attackers(square, chess.turn()).length) {
+    memo.set(key, 0);
+    return 0;
+  }
+  const legal = chess.moves({ verbose: true });
+  const captures = legal.filter((m) => m.to === square && m.captured);
+  if (!captures.length) {
+    memo.set(key, 0);
+    return 0;
+  }
+  let best = legal.length > captures.length ? 0 : -Infinity;
+  for (const m of captures) {
+    const reply = exchangeGain(new Chess(m.after), square, budget);
+    if (reply === null) return null;
+    const promotion = m.promotion ? (SAC_VAL[m.promotion] || 0) - SAC_VAL.p : 0;
+    best = Math.max(best, (SAC_VAL[m.captured!] || 0) + promotion - reply);
+  }
+  memo.set(key, best);
+  return best;
+}
+
+function couldBeSaved(
+  chess: Chess,
+  square: Square,
+  color: 'w' | 'b',
+  budget: ExchangeBudget = { nodes: 0, maxNodes: 128 }
+): boolean {
+  const piece = chess.get(square);
+  if (!piece || piece.color !== color) return false;
+  const legal = chess.moves({ verbose: true });
+  if (!chess.attackers(square, oppColor(color)).length && legal.some((m) => m.from !== square)) {
+    return true;
+  }
+  const sorted = [...legal].sort((a, b) => Number(a.from !== square) - Number(b.from !== square));
+  for (const m of sorted) {
+    const after = new Chess(m.after);
+    const to = (m.from === square ? m.to : square) as Square;
+    if (after.get(to)?.color !== color) continue;
+    const gain = exchangeGain(after, to, budget);
+    if (gain === null) return false;
+    if (gain <= (SAC_VAL[m.captured || ''] || 0)) return true;
+  }
+  return false;
+}
+
+function captureMaterial(move: { captured?: string; promotion?: string }): number {
+  return (
+    (SAC_VAL[move.captured || ''] || 0) +
+    (move.promotion ? (SAC_VAL[move.promotion] || 0) - SAC_VAL.p : 0)
+  );
+}
+
+function shortCaptureGain(chess: Chess, plies: number, budget: ExchangeBudget): number | null {
+  const memo = budget.captureMemo || (budget.captureMemo = new Map());
+  const key = chess.fen().split(' ').slice(0, 4).join(' ') + ':' + plies;
+  if (memo.has(key)) return memo.get(key)!;
+  if (++budget.nodes > budget.maxNodes) return null;
+  const legal = chess.moves({ verbose: true });
+  if (!legal.length) {
+    memo.set(key, 0);
+    return 0;
+  }
+  const mustEvade = plies > 0 && chess.inCheck();
+  const candidates = legal.filter((m) => m.captured || m.promotion || mustEvade);
+  let best = legal.length > candidates.length ? 0 : -Infinity;
+  for (const m of candidates) {
+    const after = new Chess(m.after);
+    const reply =
+      plies > 0
+        ? shortCaptureGain(after, plies - 1, budget)
+        : exchangeGain(after, m.to as Square, budget);
+    if (reply === null) return null;
+    best = Math.max(best, captureMaterial(m) - reply);
+  }
+  memo.set(key, best);
+  return best;
+}
+
+function hasLastingOffer(
+  chess: Chess,
+  square: Square,
+  credit: number,
+  budget: ExchangeBudget
+): boolean {
+  for (const m of chess.moves({ verbose: true }).filter((m) => m.to === square && m.captured)) {
+    const recovery = shortCaptureGain(new Chess(m.after), 3, budget);
+    if (recovery === null) return false;
+    if (captureMaterial(m) - credit - recovery > 0) return true;
+  }
+  return false;
+}
+
 /**
- * Classifies a single chess move
+ * Checks if a move is a genuine material sacrifice using both:
+ * 1. Brilliant-Chess legal Static Exchange Evaluation (exchangeGain + couldBeSaved + hasLastingOffer)
+ * 2. WintrCat/freechess hanging piece + pinned-attacker viability test
+ */
+export function isMaterialSacrifice(
+  fenBefore: string,
+  fenAfter: string,
+  move: { from: string; to: string; san?: string },
+  turn: 'w' | 'b'
+): boolean {
+  try {
+    const before = new Chess(fenBefore);
+    const after = new Chess(fenAfter);
+
+    if (before.inCheck() || after.isCheckmate()) return false;
+    if (move.san && move.san.includes('=')) return false;
+
+    const fromSq = move.from as Square;
+    const toSq = move.to as Square;
+    const capturedPiece = before.get(toSq);
+    const capturedVal = capturedPiece ? SAC_VAL[capturedPiece.type] || 0 : 0;
+
+    // Method 1: Brilliant-Chess SEE verification
+    const budget: ExchangeBudget = { nodes: 0, maxNodes: 128 };
+    const recoveryBudget: ExchangeBudget = { nodes: 0, maxNodes: 512 };
+    let priorThreats: Chess | null = null;
+
+    const targets = after
+      .board()
+      .flat()
+      .filter(
+        (p): p is NonNullable<typeof p> =>
+          Boolean(
+            p &&
+              p.color === turn &&
+              ['n', 'b', 'r', 'q'].includes(p.type) &&
+              after.attackers(p.square, oppColor(turn)).length > 0
+          )
+      );
+
+    for (const piece of targets) {
+      const square = piece.square;
+      const same =
+        before.get(square)?.color === piece.color && before.get(square)?.type === piece.type;
+      const source = same ? square : fromSq;
+      if (before.get(source)?.color !== piece.color || before.get(source)?.type !== piece.type) {
+        continue;
+      }
+
+      const gain = exchangeGain(after, square, budget);
+      if (gain !== null && gain > capturedVal) {
+        let validOffer = true;
+        if (same) {
+          try {
+            if (!priorThreats) {
+              priorThreats = new Chess(setFenTurn(before.fen(), oppColor(turn)));
+            }
+            const previousGain = exchangeGain(priorThreats, square, budget);
+            if (previousGain !== null && gain - capturedVal <= previousGain && !after.inCheck()) {
+              validOffer = false;
+            }
+          } catch {
+            // If flipping turn fails because opponent was in check, proceed
+          }
+        }
+
+        if (
+          validOffer &&
+          couldBeSaved(before, source, turn, budget) &&
+          hasLastingOffer(after, square, capturedVal, recoveryBudget)
+        ) {
+          return true;
+        }
+      }
+    }
+
+    // Method 2: WintrCat/freechess hanging piece + capture viability check
+    const lastPiece = before.get(toSq) || { type: 'm' };
+    const sacrificedPieces: InfluencingPiece[] = [];
+
+    for (const row of after.board()) {
+      for (const piece of row) {
+        if (!piece || piece.color !== turn || piece.type === 'k' || piece.type === 'p') continue;
+        if (PIECE_VALUES[lastPiece.type] >= PIECE_VALUES[piece.type]) continue;
+
+        // If the piece wasn't moved, ensure it wasn't already hanging before
+        if (piece.square !== toSq && isPieceHanging(fenBefore, fenBefore, piece.square)) {
+          continue;
+        }
+
+        if (isPieceHanging(fenBefore, fenAfter, piece.square)) {
+          sacrificedPieces.push(piece);
+        }
+      }
+    }
+
+    if (sacrificedPieces.length === 0) return false;
+
+    let anyPieceViablyCapturable = false;
+    const captureTestBoard = new Chess(fenAfter);
+    const maxSackVal = Math.max(...sacrificedPieces.map((s) => PIECE_VALUES[s.type]));
+
+    for (const piece of sacrificedPieces) {
+      const attackers = getAttackers(fenAfter, piece.square);
+      for (const attacker of attackers) {
+        for (const promotion of PROMOTIONS) {
+          try {
+            const moved = captureTestBoard.move({
+              from: attacker.square,
+              to: piece.square,
+              promotion,
+            });
+            if (!moved) continue;
+
+            let attackerPinned = false;
+            for (const row of captureTestBoard.board()) {
+              for (const enemyPiece of row) {
+                if (!enemyPiece || enemyPiece.color === captureTestBoard.turn()) continue;
+                if (enemyPiece.type === 'k' || enemyPiece.type === 'p') continue;
+
+                if (
+                  isPieceHanging(fenAfter, captureTestBoard.fen(), enemyPiece.square) &&
+                  PIECE_VALUES[enemyPiece.type] >= maxSackVal
+                ) {
+                  attackerPinned = true;
+                  break;
+                }
+              }
+              if (attackerPinned) break;
+            }
+
+            if (PIECE_VALUES[piece.type] >= 5) {
+              if (!attackerPinned) {
+                anyPieceViablyCapturable = true;
+              }
+            } else if (
+              !attackerPinned &&
+              !captureTestBoard.moves().some((m) => m.endsWith('#'))
+            ) {
+              anyPieceViablyCapturable = true;
+            }
+
+            captureTestBoard.undo();
+            if (anyPieceViablyCapturable) break;
+          } catch {
+            // Ignore illegal capture
+          }
+        }
+        if (anyPieceViablyCapturable) break;
+      }
+      if (anyPieceViablyCapturable) break;
+    }
+
+    return anyPieceViablyCapturable;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Classifies a single chess move using the integrated WintrCat/freechess & Brilliant-Chess engine
  */
 export function classifyMove({
   ply,
@@ -273,83 +691,248 @@ export function classifyMove({
   evalAfterWhite: number;
   pieceSacrificed: boolean;
 } {
-  // Both evalBeforeObj and evalAfterObj are normalized to White's perspective
-  const evalBeforeWhite = evalBeforeObj.scoreCp ?? 0;
-  const evalAfterWhite = evalAfterObj.scoreCp ?? 0;
+  const sign = turn === 'w' ? 1 : -1;
 
-  // Convert evaluations to moving player's perspective
-  const playerEvalBefore = turn === 'w' ? evalBeforeWhite : -evalBeforeWhite;
-  const playerEvalAfter = turn === 'w' ? evalAfterWhite : -evalAfterWhite;
+  // White-perspective evaluations
+  const evalBeforeWhite = evalBeforeObj.scoreCp ?? 0;
+  let evalAfterWhite = evalAfterObj.scoreCp ?? 0;
+
+  const mateBeforeWhite = evalBeforeObj.mate;
+  const mateAfterWhite = evalAfterObj.mate;
+
+  // Player-perspective evaluations (positive = good for moving player)
+  const playerEvalBefore = evalBeforeWhite * sign;
+  const rawPlayerEvalAfter = evalAfterWhite * sign;
+
+  const playerMateBefore = mateBeforeWhite !== undefined ? mateBeforeWhite * sign : undefined;
+  const playerMateAfter = mateAfterWhite !== undefined ? mateAfterWhite * sign : undefined;
+
+  const bestMove = evalBeforeObj.bestMove || evalBeforeObj.multiPVEvals?.[0]?.bestMove || '';
+  const isTopEngineChoice =
+    Boolean(bestMove) &&
+    (bestMove === uci || bestMove.slice(0, 4) === uci.slice(0, 4));
+
+  // Same-root MultiPV line matching (WintrCat/freechess analysis.ts lines 65-88)
+  // Eliminates Stockfish odd/even ply horizon noise when the played move is in top MultiPV lines
+  const matchingTopLine = evalBeforeObj.multiPVEvals?.find(
+    (line) => line.bestMove === uci || line.bestMove.slice(0, 4) === uci.slice(0, 4)
+  );
+
+  let lastLineEvalLoss = Infinity;
+  let matchedPlayerEvalAfter: number | undefined;
+  if (matchingTopLine && matchingTopLine.scoreCp !== undefined) {
+    matchedPlayerEvalAfter = matchingTopLine.scoreCp * sign;
+    lastLineEvalLoss = Math.max(0, playerEvalBefore - matchedPlayerEvalAfter);
+  }
+
+  const crossPlyEvalLoss = Math.max(0, playerEvalBefore - rawPlayerEvalAfter);
+  const evalLoss = isTopEngineChoice ? 0 : Math.min(crossPlyEvalLoss, lastLineEvalLoss);
+
+  // Use horizon-corrected evalAfter when MultiPV same-root evaluation shows smaller loss
+  const effectivePlayerEvalAfter = isTopEngineChoice
+    ? Math.max(playerEvalBefore, rawPlayerEvalAfter)
+    : matchedPlayerEvalAfter !== undefined && lastLineEvalLoss < crossPlyEvalLoss
+      ? matchedPlayerEvalAfter
+      : rawPlayerEvalAfter;
+
+  if (isTopEngineChoice && rawPlayerEvalAfter < playerEvalBefore) {
+    evalAfterWhite = evalBeforeWhite;
+  } else if (matchedPlayerEvalAfter !== undefined && lastLineEvalLoss < crossPlyEvalLoss) {
+    evalAfterWhite = matchingTopLine!.scoreCp!;
+  }
 
   const winPctBefore = cpToWinPct(playerEvalBefore);
-  const winPctAfter = cpToWinPct(playerEvalAfter);
-  const rawWinPctLoss = Math.max(0, winPctBefore - winPctAfter);
+  const winPctAfter = cpToWinPct(effectivePlayerEvalAfter);
+  const rawWinPctLoss = isTopEngineChoice ? 0 : Math.max(0, winPctBefore - winPctAfter);
 
-  const bestMove = evalBeforeObj.bestMove || '';
-  const isTopEngineChoice = bestMove === uci;
+  // Forced move check: if only 1 legal move existed in fenBefore
+  let isForcedMove = false;
+  try {
+    const beforeBoard = new Chess(fenBefore);
+    if (beforeBoard.moves().length <= 1) {
+      isForcedMove = true;
+    }
+  } catch {
+    // Ignore
+  }
 
+  // Opening book check
   const openingMatch = lookupOpening(fenAfter);
-  const isBookMove = Boolean(forceBook || (ply <= 16 && openingMatch));
+  const isSafeForBook =
+    !(playerMateAfter !== undefined && playerMateAfter < 0) && evalLoss <= 120;
+  const isBookMove = Boolean((forceBook || (ply <= 24 && openingMatch)) && isSafeForBook);
 
+  // MultiPV 2nd best move evaluation (for Brilliant & Great move tests)
+  const secondTopLine = evalBeforeObj.multiPVEvals?.find((l) => l.pvIndex === 2);
+  const playerSecondEval =
+    secondTopLine?.scoreCp !== undefined ? secondTopLine.scoreCp * sign : undefined;
+  const secondMoveMate =
+    secondTopLine?.mate !== undefined ? secondTopLine.mate * sign : undefined;
+
+  const noMate = playerMateBefore === undefined && playerMateAfter === undefined;
   const isSacrifice = isMaterialSacrifice(fenBefore, fenAfter, { from, to, san }, turn);
-
-  // MultiPV 2 evaluation from moving player's perspective
-  const pv2White = evalBeforeObj.multiPVEvals?.[1]?.scoreCp;
-  const playerPv2 = pv2White !== undefined ? (turn === 'w' ? pv2White : -pv2White) : undefined;
-  const pv2WinPct = playerPv2 !== undefined ? cpToWinPct(playerPv2) : undefined;
-  const pv2WinPctLoss = pv2WinPct !== undefined ? Math.max(0, winPctBefore - pv2WinPct) : 0;
 
   let classification: MoveClassification = 'good';
 
-  // 1. Theoretical opening move (unconditionally classified as Book regardless of shallow engine WPL)
+  // 1. Opening Book Move
   if (isBookMove) {
     classification = 'book';
   }
-  // 2. Brilliant move: sound sacrifice that maintains advantage without already being overwhelmingly won
-  else if (
-    isSacrifice &&
-    (isTopEngineChoice || rawWinPctLoss <= 1.5) &&
-    playerEvalAfter >= -50 &&
-    playerEvalBefore < 700
-  ) {
-    classification = 'brilliant';
-  }
-  // 3. Great move: only move that saves the position or maintains winning advantage (gap to 2nd PV is substantial)
-  else if (
-    isTopEngineChoice &&
-    pv2WinPctLoss >= 8.5 &&
-    playerEvalAfter >= -150 &&
-    playerEvalBefore <= 600
-  ) {
-    classification = 'great';
-  }
-  // 4. Missed Win / Miss: failing to punish an opponent's blunder or giving back a decisive win
-  else if (
-    (prevMoveAnalysis &&
-      prevMoveAnalysis.classification !== 'book' &&
-      prevMoveAnalysis.winPctLoss >= 10 &&
-      rawWinPctLoss >= prevMoveAnalysis.winPctLoss * 0.6 &&
-      rawWinPctLoss >= 8) ||
-    (playerEvalBefore >= 300 && playerEvalAfter < 100 && rawWinPctLoss >= 15)
-  ) {
-    classification = 'missed_win';
-  }
-  // 5. Standard Expected Points Loss thresholds (Chess.com / Lichess standard)
-  else if (rawWinPctLoss >= 20) {
-    classification = 'blunder';
-  } else if (rawWinPctLoss >= 10) {
-    classification = 'mistake';
-  } else if (rawWinPctLoss >= 5) {
-    classification = 'inaccuracy';
-  } else if (isTopEngineChoice || rawWinPctLoss <= 1.5) {
+  // 2. Forced Move (only 1 legal move) -> Best
+  else if (isForcedMove) {
     classification = 'best';
-  } else if (rawWinPctLoss <= 3.5) {
-    classification = 'excellent';
-  } else {
+  }
+  // 3. Engine #1 Choice -> starts as Best, then checked for Brilliant / Great below
+  else if (isTopEngineChoice) {
+    classification = 'best';
+  }
+  // 4. Non-top move classification (WintrCat/freechess analysis.ts lines 102-163)
+  else {
+    // Case A: No mate before and no mate after -> WintrCat centipawn threshold curve
+    if (noMate) {
+      for (const classif of CENTIPAWN_CLASSIFICATIONS) {
+        if (evalLoss <= getEvaluationLossThreshold(classif, evalBeforeWhite)) {
+          classification = classif;
+          break;
+        }
+      }
+    }
+    // Case B: No mate before, but mate is on the board after the move (cp -> mate)
+    else if (playerMateBefore === undefined && playerMateAfter !== undefined) {
+      if (playerMateAfter > 0) {
+        classification = 'best';
+      } else if (playerMateAfter >= -2) {
+        classification = 'blunder';
+      } else if (playerMateAfter >= -5) {
+        classification = 'mistake';
+      } else {
+        classification = 'inaccuracy';
+      }
+    }
+    // Case C: Mate existed before, but no longer mate after the move (mate -> cp)
+    else if (playerMateBefore !== undefined && playerMateAfter === undefined) {
+      if (playerMateBefore < 0 && effectivePlayerEvalAfter < 0) {
+        classification = 'best';
+      } else if (effectivePlayerEvalAfter >= 400) {
+        classification = 'good';
+      } else if (effectivePlayerEvalAfter >= 150) {
+        classification = 'inaccuracy';
+      } else if (effectivePlayerEvalAfter >= -100) {
+        classification = 'missed_win';
+      } else {
+        classification = 'blunder';
+      }
+    }
+    // Case D: Mate existed before AND mate still exists after (mate -> mate)
+    else if (playerMateBefore !== undefined && playerMateAfter !== undefined) {
+      if (playerMateBefore > 0) {
+        if (playerMateAfter <= -4) {
+          classification = 'mistake';
+        } else if (playerMateAfter < 0) {
+          classification = 'blunder';
+        } else if (playerMateAfter <= playerMateBefore) {
+          classification = 'best';
+        } else if (playerMateAfter <= playerMateBefore + 2) {
+          classification = 'excellent';
+        } else {
+          classification = 'good';
+        }
+      } else {
+        if (playerMateAfter > 0 || playerMateAfter === playerMateBefore) {
+          classification = 'best';
+        } else {
+          classification = 'good';
+        }
+      }
+    }
+  }
+
+  // 5. Check for Brilliant & Great Moves when move is Best or Excellent (WintrCat lines 166-282)
+  if (
+    !isBookMove &&
+    !isForcedMove &&
+    (classification === 'best' || (classification === 'excellent' && evalLoss <= 20))
+  ) {
+    const winningAnyways =
+      (playerSecondEval !== undefined && playerSecondEval >= 700 && playerMateBefore === undefined) ||
+      (playerMateBefore !== undefined && playerMateBefore > 0 && secondMoveMate !== undefined && secondMoveMate > 0);
+
+    if (
+      isSacrifice &&
+      effectivePlayerEvalAfter >= -50 &&
+      !winningAnyways &&
+      !san.includes('=')
+    ) {
+      classification = 'brilliant';
+    } else if (
+      classification === 'best' &&
+      noMate &&
+      playerSecondEval !== undefined &&
+      !isPieceHanging(fenBefore, fenAfter, to as Square)
+    ) {
+      const multiPvGap = playerEvalBefore - playerSecondEval;
+      const punishedOpponentError =
+        prevMoveAnalysis &&
+        (prevMoveAnalysis.classification === 'blunder' ||
+          prevMoveAnalysis.classification === 'mistake' ||
+          prevMoveAnalysis.classification === 'missed_win') &&
+        multiPvGap >= 150;
+
+      const onlyGoodMoveInCriticalPos =
+        multiPvGap >= 200 &&
+        effectivePlayerEvalAfter >= -100 &&
+        playerEvalBefore <= 500;
+
+      if (punishedOpponentError || onlyGoodMoveInCriticalPos) {
+        classification = 'great';
+      }
+    }
+  }
+
+  // 6. Check for Missed Win (Brilliant-Chess lines 301-305)
+  if (
+    (classification === 'inaccuracy' ||
+      classification === 'mistake' ||
+      classification === 'blunder') &&
+    noMate
+  ) {
+    const opponentJustErred =
+      prevMoveAnalysis &&
+      (prevMoveAnalysis.classification === 'blunder' ||
+        prevMoveAnalysis.classification === 'mistake');
+
+    if (
+      opponentJustErred &&
+      playerEvalBefore >= 200 &&
+      effectivePlayerEvalAfter < 120 &&
+      evalLoss >= 130
+    ) {
+      classification = 'missed_win';
+    } else if (
+      playerEvalBefore >= 350 &&
+      effectivePlayerEvalAfter >= -80 &&
+      effectivePlayerEvalAfter <= 100 &&
+      evalLoss >= 220
+    ) {
+      classification = 'missed_win';
+    }
+  }
+
+  // 7. WintrCat/freechess Won/Lost Position Clamping (analysis.ts lines 284-297)
+  // Do not allow blunder if move is still completely winning (>= +6.0)
+  if (classification === 'blunder' && effectivePlayerEvalAfter >= 600 && noMate) {
     classification = 'good';
   }
 
-  const winPctLoss = classification === 'book' ? 0 : rawWinPctLoss;
+  // Do not allow blunder if player was already in a completely lost position (<= -6.0)
+  if (classification === 'blunder' && playerEvalBefore <= -600 && noMate) {
+    classification = 'good';
+  }
+
+  const winPctLoss =
+    classification === 'book' || classification === 'best' || classification === 'brilliant' || classification === 'great'
+      ? 0
+      : rawWinPctLoss;
 
   return {
     classification,
