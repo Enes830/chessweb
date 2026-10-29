@@ -1,4 +1,4 @@
-import { Chess } from 'chess.js';
+import { Chess, Square } from 'chess.js';
 import {
   ClassificationMeta,
   MoveAnalysis,
@@ -131,14 +131,28 @@ export function estimateEloFromAccuracy(accuracy: number): number {
 }
 
 /**
- * Checks if a move was a material sacrifice
+ * Checks if a move was a genuine material sacrifice (for Brilliant move detection)
  */
 export function isMaterialSacrifice(
   fenBefore: string,
   fenAfter: string,
+  move: { from: string; to: string; san?: string },
   turn: 'w' | 'b'
 ): boolean {
   try {
+    const chessBefore = new Chess(fenBefore);
+    const chessAfter = new Chess(fenAfter);
+
+    // Moves escaping check cannot be considered voluntary sacrifices
+    if (chessBefore.inCheck()) return false;
+
+    // Checkmates are terminal victories, not sacrifices
+    if (chessAfter.isCheckmate()) return false;
+
+    // Pawn promotions are material gains, not sacrifices
+    if (move.san && move.san.includes('=')) return false;
+
+    const oppColor = turn === 'w' ? 'b' : 'w';
     const pieceValues: Record<string, number> = {
       p: 1,
       n: 3,
@@ -148,23 +162,72 @@ export function isMaterialSacrifice(
       k: 0,
     };
 
-    const countMaterial = (fen: string, color: 'w' | 'b') => {
-      const placement = fen.split(' ')[0];
-      let val = 0;
-      for (const char of placement) {
-        if (color === 'w' && char >= 'A' && char <= 'Z') {
-          val += pieceValues[char.toLowerCase()] || 0;
-        } else if (color === 'b' && char >= 'a' && char <= 'z') {
-          val += pieceValues[char] || 0;
+    const fromSquare = move.from as Square;
+    const toSquare = move.to as Square;
+
+    const pieceMoved = chessBefore.get(fromSquare);
+    if (!pieceMoved || pieceMoved.type === 'k') return false;
+
+    const movedVal = pieceValues[pieceMoved.type] || 0;
+    const capturedPiece = chessBefore.get(toSquare);
+    const capturedVal = capturedPiece ? (pieceValues[capturedPiece.type] || 0) : 0;
+
+    // 1. Direct Piece or Exchange Sacrifice
+    // The piece moved to a square directly attacked by opponent
+    const oppMoves = chessAfter.moves({ verbose: true });
+    const directCaptures = oppMoves.filter((m) => m.to === toSquare);
+
+    if (directCaptures.length > 0) {
+      const minAttackerVal = Math.min(
+        ...directCaptures.map((m) => pieceValues[m.piece] || 1)
+      );
+
+      // A: Attacked by a lower-value piece (e.g. minor piece attacked by pawn, rook by minor/pawn, queen by rook/minor/pawn)
+      if (movedVal >= 3 && minAttackerVal < movedVal && capturedVal < movedVal) {
+        return true;
+      }
+
+      // B: Major or minor piece left hanging / undefended
+      const isDefended = chessAfter.isAttacked(toSquare, turn);
+      if (movedVal >= 3 && !isDefended && capturedVal < movedVal) {
+        return true;
+      }
+
+      // C: Exchange sacrifice (giving up Rook for minor piece, net >= 2 pawn deficit)
+      if (movedVal === 5 && capturedVal <= 3 && minAttackerVal <= 3) {
+        return true;
+      }
+    }
+
+    // 2. Discovered / Quiet sacrifice: leaving another major/minor piece hanging
+    const board = chessAfter.board();
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const p = board[r][c];
+        if (
+          p &&
+          p.color === turn &&
+          (p.type === 'n' || p.type === 'b' || p.type === 'r' || p.type === 'q')
+        ) {
+          const sq = p.square;
+          if (sq !== toSquare) {
+            const val = pieceValues[p.type] || 0;
+            const attackedBefore = chessBefore.isAttacked(sq, oppColor);
+            const attackedAfter = chessAfter.isAttacked(sq, oppColor);
+            const defendedAfter = chessAfter.isAttacked(sq, turn);
+
+            if (!attackedBefore && attackedAfter && !defendedAfter && val >= 3) {
+              const oppCanCapture = oppMoves.some((m) => m.to === sq);
+              if (oppCanCapture) {
+                return true;
+              }
+            }
+          }
         }
       }
-      return val;
-    };
+    }
 
-    const matBefore = countMaterial(fenBefore, turn);
-    const matAfter = countMaterial(fenAfter, turn);
-
-    return matBefore - matAfter >= 3;
+    return false;
   } catch {
     return false;
   }
@@ -208,9 +271,11 @@ export function classifyMove({
   evalAfterWhite: number;
   pieceSacrificed: boolean;
 } {
+  // Both evalBeforeObj and evalAfterObj are normalized to White's perspective
   const evalBeforeWhite = evalBeforeObj.scoreCp ?? 0;
   const evalAfterWhite = evalAfterObj.scoreCp ?? 0;
 
+  // Convert evaluations to moving player's perspective
   const playerEvalBefore = turn === 'w' ? evalBeforeWhite : -evalBeforeWhite;
   const playerEvalAfter = turn === 'w' ? evalAfterWhite : -evalAfterWhite;
 
@@ -224,45 +289,58 @@ export function classifyMove({
   const openingMatch = lookupOpening(fenAfter);
   const isBookMove = ply <= 14 && !!openingMatch;
 
-  const isSacrifice = isMaterialSacrifice(fenBefore, fenAfter, turn);
-  const pv2ScoreCp = evalBeforeObj.multiPVEvals?.[1]?.scoreCp;
+  const isSacrifice = isMaterialSacrifice(fenBefore, fenAfter, { from, to, san }, turn);
+
+  // MultiPV 2 evaluation from moving player's perspective
+  const pv2White = evalBeforeObj.multiPVEvals?.[1]?.scoreCp;
+  const playerPv2 = pv2White !== undefined ? (turn === 'w' ? pv2White : -pv2White) : undefined;
+  const pv2WinPct = playerPv2 !== undefined ? cpToWinPct(playerPv2) : undefined;
+  const pv2WinPctLoss = pv2WinPct !== undefined ? Math.max(0, winPctBefore - pv2WinPct) : 0;
 
   let classification: MoveClassification = 'good';
 
+  // 1. Theoretical opening move
   if (isBookMove && winPctLoss < 4) {
     classification = 'book';
-  } else if (
+  }
+  // 2. Brilliant move: sound sacrifice that maintains advantage without already being overwhelmingly won
+  else if (
     isSacrifice &&
-    (isTopEngineChoice || Math.abs(playerEvalBefore - playerEvalAfter) <= 30) &&
-    playerEvalAfter >= 120 &&
-    (pv2ScoreCp === undefined ||
-      Math.abs(evalBeforeWhite - pv2ScoreCp) >= 150)
+    (isTopEngineChoice || winPctLoss <= 1.5) &&
+    playerEvalAfter >= -50 &&
+    playerEvalBefore < 700
   ) {
     classification = 'brilliant';
-  } else if (
+  }
+  // 3. Great move: only move that saves the position or maintains winning advantage (gap to 2nd PV is substantial)
+  else if (
     isTopEngineChoice &&
-    pv2ScoreCp !== undefined &&
-    Math.abs(evalBeforeWhite - pv2ScoreCp) >= 150 &&
-    playerEvalAfter >= 0
+    pv2WinPctLoss >= 8.5 &&
+    playerEvalAfter >= -150 &&
+    playerEvalBefore <= 600
   ) {
     classification = 'great';
-  } else if (
-    prevMoveAnalysis &&
-    ['blunder', 'mistake'].includes(prevMoveAnalysis.classification) &&
-    winPctLoss >= 15 &&
-    playerEvalBefore >= 200 &&
-    playerEvalAfter < 80
+  }
+  // 4. Missed Win / Miss: failing to punish an opponent's blunder or giving back a decisive win
+  else if (
+    (prevMoveAnalysis &&
+      prevMoveAnalysis.winPctLoss >= 10 &&
+      winPctLoss >= prevMoveAnalysis.winPctLoss * 0.6 &&
+      winPctLoss >= 8) ||
+    (playerEvalBefore >= 300 && playerEvalAfter < 100 && winPctLoss >= 15)
   ) {
     classification = 'missed_win';
-  } else if (winPctLoss >= 20) {
+  }
+  // 5. Standard Expected Points Loss thresholds (Chess.com / Lichess standard)
+  else if (winPctLoss >= 20) {
     classification = 'blunder';
   } else if (winPctLoss >= 10) {
     classification = 'mistake';
   } else if (winPctLoss >= 5) {
     classification = 'inaccuracy';
-  } else if (isTopEngineChoice || winPctLoss < 1.5) {
+  } else if (isTopEngineChoice || winPctLoss <= 1.5) {
     classification = 'best';
-  } else if (winPctLoss < 3) {
+  } else if (winPctLoss <= 3.5) {
     classification = 'excellent';
   } else {
     classification = 'good';

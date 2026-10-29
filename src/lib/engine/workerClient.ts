@@ -144,6 +144,19 @@ export class StockfishWorkerClient {
     const pvMoves = pvIndex !== -1 ? tokens.slice(pvIndex) : [];
     const bestMove = pvMoves[0] || '';
 
+    // Normalize Stockfish score to White's perspective
+    // Stockfish UCI always reports score from the perspective of the side to move in currentTask.fen
+    const fenTurn = (this.currentTask?.fen.split(' ')[1] || 'w') as 'w' | 'b';
+    if (fenTurn === 'b') {
+      if (scoreCp !== undefined) scoreCp = -scoreCp;
+      if (mate !== undefined) mate = -mate;
+    }
+
+    // Convert mate to high centipawns for scoreCp so all downstream consumers have a numeric scale
+    if (mate !== undefined && scoreCp === undefined) {
+      scoreCp = mate > 0 ? (10000 - Math.abs(mate) * 100) : (-10000 + Math.abs(mate) * 100);
+    }
+
     // Update main eval if multipv === 1
     if (multiPV === 1) {
       this.currentEvalResult.depth = depth;
