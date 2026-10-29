@@ -4,11 +4,10 @@ import React from 'react';
 import { GameReviewReport, MoveClassification } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
 import { useTranslation } from '@/lib/i18n/LanguageContext';
-import { Target, Send, RotateCcw, TrendingUp } from 'lucide-react';
+import { Send, RotateCcw, TrendingUp } from 'lucide-react';
 
 interface ReviewSummaryProps {
   report: GameReviewReport;
-  onRetryMistakes: () => void;
   onOpenTelegramModal: () => void;
   onRestartReview: () => void;
   className?: string;
@@ -16,7 +15,6 @@ interface ReviewSummaryProps {
 
 export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
   report,
-  onRetryMistakes,
   onOpenTelegramModal,
   onRestartReview,
   className = '',
@@ -56,14 +54,6 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
     blunder: 'classBlunder',
     missed_win: 'classMissedWin',
   };
-
-  const totalMistakes =
-    (classificationsCount.white.blunder || 0) +
-    (classificationsCount.white.mistake || 0) +
-    (classificationsCount.white.missed_win || 0) +
-    (classificationsCount.black.blunder || 0) +
-    (classificationsCount.black.mistake || 0) +
-    (classificationsCount.black.missed_win || 0);
 
   return (
     <div className={`space-y-3.5 ${className}`}>
@@ -201,18 +191,6 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
 
       {/* Review Actions */}
       <div className="space-y-2 pt-1">
-        {totalMistakes > 0 && (
-          <button
-            onClick={onRetryMistakes}
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 font-semibold text-xs transition-colors"
-          >
-            <Target className="w-3.5 h-3.5" />
-            <span>
-              {t('retryActionBtn')} ({totalMistakes})
-            </span>
-          </button>
-        )}
-
         <button
           onClick={onOpenTelegramModal}
           className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/[0.08] font-semibold text-xs transition-colors"

@@ -269,17 +269,6 @@ export default function HomePage() {
     }
   };
 
-  const handleRetryMistakes = () => {
-    if (!reviewReport) return;
-    const firstMistake = reviewReport.moves.find((m) =>
-      ['blunder', 'mistake', 'missed_win'].includes(m.classification)
-    );
-    if (firstMistake) {
-      setCurrentPly(firstMistake.ply);
-      setActiveRightTab('review');
-    }
-  };
-
   const currentMove =
     reviewReport && currentPly > 0 ? reviewReport.moves[currentPly - 1] : null;
 
@@ -505,7 +494,6 @@ export default function HomePage() {
                   {activeRightTab === 'review' && (
                     <ReviewSummary
                       report={reviewReport}
-                      onRetryMistakes={handleRetryMistakes}
                       onOpenTelegramModal={() => setIsTelegramModalOpen(true)}
                       onRestartReview={() => setCurrentPly(1)}
                     />

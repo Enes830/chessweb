@@ -1,6 +1,6 @@
 # RewindBoard ♞
 
-**RewindBoard** is a zero-ad, 100% client-side Chess Game Review web application powered by **Stockfish 19 WebAssembly**. It reproduces Chess.com's premium Game Review experience with move-by-move CAPS accuracy, brilliant sacrifices, mistake retrying, interactive evaluation graphs, and seamless companion Telegram Bot training integration.
+**RewindBoard** is a zero-ad, 100% client-side Chess Game Review web application powered by **Stockfish 19 WebAssembly**. It reproduces Chess.com's premium Game Review experience with move-by-move CAPS accuracy, brilliant sacrifices, tactical evaluations, interactive evaluation graphs, and seamless companion Telegram Bot training integration.
 
 ---
 
@@ -28,7 +28,6 @@
   - **Vertical Evaluation Bar**: Smooth animated height transitions reflecting win probability and mate depth.
   - **SVG Arrows & Badges**: Green arrow for engine's best move, red/amber arrow for suboptimal moves, and official classification badge overlays on target squares.
   - **Evaluation Graph**: Responsive Recharts area chart with color-coded markers for blunders and brilliancies. Click any point to jump straight to that move.
-  - **Interactive Retry Mistake Mode**: Set up positions where mistakes occurred, make moves on the board, receive instant feedback, or view solutions. Triggers confetti on solving!
   - **Coach Banner & "Explain Why"**: Move comparisons with tactical plain-English explanations.
 - **Companion Telegram Bot Sync**:
   - Exports extracted mistakes and blunders into the `RewindPuzzlePayload` schema.

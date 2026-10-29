@@ -55,15 +55,6 @@ export interface TranslationDictionary {
   lastMove: string;
   autoPlay: string;
   pause: string;
-  retryMistake: string;
-  solution: string;
-  continueReview: string;
-
-  // Practice / Retry Banner
-  practiceBannerTitle: string;
-  practiceBannerSub: string;
-  practiceCorrect: string;
-  practiceWrong: string;
   white: string;
   black: string;
 
@@ -81,7 +72,6 @@ export interface TranslationDictionary {
   accuracyTitle: string;
   perfRating: string;
   classificationBreakdown: string;
-  retryActionBtn: string;
   openTelegramModal: string;
   restartReview: string;
 
@@ -134,7 +124,7 @@ export const translations: Record<Locale, TranslationDictionary> = {
 
     heroTitle: 'Chess Game Review',
     heroSubtitle:
-      'Analyze games with client-side Stockfish 19 WebAssembly. Accurate accuracy scores, tactical breakdown, and mistake practice.',
+      'Analyze games with client-side Stockfish 19 WebAssembly. Accurate accuracy scores, tactical breakdown, and blunder detection.',
     tabSearch: 'Search or URL',
     tabPgn: 'Paste PGN',
     tabLibrary: 'Library Games',
@@ -174,14 +164,6 @@ export const translations: Record<Locale, TranslationDictionary> = {
     lastMove: 'Last Move',
     autoPlay: 'Auto Play',
     pause: 'Pause',
-    retryMistake: 'Retry Mistake',
-    solution: 'Show Solution',
-    continueReview: 'Continue Review',
-
-    practiceBannerTitle: 'Practice This Mistake',
-    practiceBannerSub: 'Find a better move for {color}',
-    practiceCorrect: 'Correct move!',
-    practiceWrong: 'Not the best move. Try again!',
     white: 'White',
     black: 'Black',
 
@@ -197,7 +179,6 @@ export const translations: Record<Locale, TranslationDictionary> = {
     accuracyTitle: 'CAPS Accuracy',
     perfRating: 'Estimated Performance',
     classificationBreakdown: 'Move Classifications',
-    retryActionBtn: 'Retry Mistakes',
     openTelegramModal: 'Export Puzzles',
     restartReview: 'Start from Move 1',
 
@@ -245,7 +226,7 @@ export const translations: Record<Locale, TranslationDictionary> = {
 
     heroTitle: 'مراجعة مباريات الشطرنج',
     heroSubtitle:
-      'حلّل مبارياتك بمحرك ستوكفيش 19 المدمج عبر المتصفح. تقييم دقة النقلات، تفكيك التكتيكات، وتدريب تفاعلي على تصحيح الأخطاء.',
+      'حلّل مبارياتك بمحرك ستوكفيش 19 المدمج عبر المتصفح. تقييم دقة النقلات، تفكيك التكتيكات، واكتشاف الأخطاء الفادحة.',
     tabSearch: 'بحث أو رابط',
     tabPgn: 'لصق PGN',
     tabLibrary: 'مباريات مميزة',
@@ -285,14 +266,6 @@ export const translations: Record<Locale, TranslationDictionary> = {
     lastMove: 'النهاية',
     autoPlay: 'تشغيل تلقائي',
     pause: 'إيقاف مؤقت',
-    retryMistake: 'إعادة تصحيح الخطأ',
-    solution: 'إظهار الحل',
-    continueReview: 'متابعة المراجعة',
-
-    practiceBannerTitle: 'تدرّب على هذا الموقف',
-    practiceBannerSub: 'ابحث عن نقلة أفضل لـ {color}',
-    practiceCorrect: 'نقلة صحيحة وممتازة!',
-    practiceWrong: 'ليست النقلة الأفضل. حاول مجدداً!',
     white: 'الأبيض',
     black: 'الأسود',
 
@@ -308,7 +281,6 @@ export const translations: Record<Locale, TranslationDictionary> = {
     accuracyTitle: 'دقة اللعب (CAPS)',
     perfRating: 'الأداء التقديري (Elo)',
     classificationBreakdown: 'تصنيف النقلات',
-    retryActionBtn: 'تمرين على الأخطاء',
     openTelegramModal: 'تصدير الألغاز',
     restartReview: 'البدء من النقلة 1',
 
