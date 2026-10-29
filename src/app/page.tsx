@@ -167,11 +167,45 @@ export default function HomePage() {
         },
       };
 
+      // Find the deepest opening book match within the opening phase (ply <= 16)
+      // All moves leading up to a recognized book position are theoretical book moves
+      let lastBookIndex = -1;
+      let deepestOpeningName: string | undefined;
+      const stepOpenings: Array<string | undefined> = new Array(moveSteps.length);
+
+      for (let i = 0; i < moveSteps.length; i++) {
+        const match = lookupOpening(moveSteps[i].fenAfter);
+        if (match) {
+          stepOpenings[i] = match.name;
+          deepestOpeningName = match.name;
+          if (moveSteps[i].ply <= 16) {
+            lastBookIndex = i;
+          }
+        }
+      }
+
+      // Carry forward / backfill opening names across the book sequence (0..lastBookIndex)
+      if (lastBookIndex >= 0) {
+        let currentName = stepOpenings[0] || deepestOpeningName;
+        for (let i = 0; i <= lastBookIndex; i++) {
+          if (stepOpenings[i]) {
+            currentName = stepOpenings[i];
+          } else {
+            stepOpenings[i] = currentName;
+          }
+        }
+      }
+
+      if (!meta.opening && deepestOpeningName) {
+        meta.opening = deepestOpeningName;
+      }
+
       for (let i = 0; i < moveSteps.length; i++) {
         const step = moveSteps[i];
         const evalBeforeObj = evalResults[i];
         const evalAfterObj = evalResults[i + 1];
         const prevMoveAnalysis = i > 0 ? analyzedMoves[i - 1] : undefined;
+        const isBackfilledBook = i <= lastBookIndex;
 
         const classificationResult = classifyMove({
           ply: step.ply,
@@ -186,9 +220,8 @@ export default function HomePage() {
           evalBeforeObj,
           evalAfterObj,
           prevMoveAnalysis,
+          forceBook: isBackfilledBook,
         });
-
-        const openingMatch = lookupOpening(step.fenAfter);
 
         let bestSan = evalBeforeObj.bestMove || '';
         try {
@@ -228,7 +261,7 @@ export default function HomePage() {
           bestMoveSan: bestSan || evalBeforeObj.bestMove || '',
           pv: evalBeforeObj.pv || [],
           classification: classificationResult.classification,
-          openingName: openingMatch?.name,
+          openingName: stepOpenings[i],
           pieceSacrificed: classificationResult.pieceSacrificed,
         };
 

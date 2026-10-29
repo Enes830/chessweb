@@ -27,6 +27,7 @@ export class StockfishWorkerClient {
     multiPVEvals: [],
   };
   private isTerminated: boolean = false;
+  private currentMultiPV: number = 2;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -50,6 +51,7 @@ export class StockfishWorkerClient {
       this.send('uci');
       this.send('setoption name Threads value 1');
       this.send('setoption name Hash value 32');
+      this.send('setoption name MultiPV value 2');
       this.send('isready');
     } catch (e) {
       console.error('Failed to instantiate Stockfish worker:', e);
@@ -112,6 +114,14 @@ export class StockfishWorkerClient {
   }
 
   private parseInfoLine(line: string) {
+    // Ignore partial aspiration window fail-high / fail-low bound lines if we already have a full eval
+    if (
+      (line.includes('upperbound') || line.includes('lowerbound')) &&
+      this.currentEvalResult.depth > 0
+    ) {
+      return;
+    }
+
     const tokens = line.split(/\s+/);
 
     let depth = 0;
@@ -228,7 +238,10 @@ export class StockfishWorkerClient {
       multiPVEvals: [],
     };
 
-    this.send(`setoption name MultiPV value ${this.currentTask.multiPV}`);
+    if (this.currentTask.multiPV !== this.currentMultiPV) {
+      this.currentMultiPV = this.currentTask.multiPV;
+      this.send(`setoption name MultiPV value ${this.currentTask.multiPV}`);
+    }
     this.send(`position fen ${this.currentTask.fen}`);
     this.send(`go depth ${this.currentTask.depth}`);
   }

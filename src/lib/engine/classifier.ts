@@ -249,6 +249,7 @@ export function classifyMove({
   evalBeforeObj,
   evalAfterObj,
   prevMoveAnalysis,
+  forceBook = false,
 }: {
   ply: number;
   moveNumber: number;
@@ -262,6 +263,7 @@ export function classifyMove({
   evalBeforeObj: EngineEvalResult;
   evalAfterObj: EngineEvalResult;
   prevMoveAnalysis?: MoveAnalysis;
+  forceBook?: boolean;
 }): {
   classification: MoveClassification;
   winPctBefore: number;
@@ -281,13 +283,13 @@ export function classifyMove({
 
   const winPctBefore = cpToWinPct(playerEvalBefore);
   const winPctAfter = cpToWinPct(playerEvalAfter);
-  const winPctLoss = Math.max(0, winPctBefore - winPctAfter);
+  const rawWinPctLoss = Math.max(0, winPctBefore - winPctAfter);
 
   const bestMove = evalBeforeObj.bestMove || '';
   const isTopEngineChoice = bestMove === uci;
 
   const openingMatch = lookupOpening(fenAfter);
-  const isBookMove = ply <= 14 && !!openingMatch;
+  const isBookMove = Boolean(forceBook || (ply <= 16 && openingMatch));
 
   const isSacrifice = isMaterialSacrifice(fenBefore, fenAfter, { from, to, san }, turn);
 
@@ -299,14 +301,14 @@ export function classifyMove({
 
   let classification: MoveClassification = 'good';
 
-  // 1. Theoretical opening move
-  if (isBookMove && winPctLoss < 4) {
+  // 1. Theoretical opening move (unconditionally classified as Book regardless of shallow engine WPL)
+  if (isBookMove) {
     classification = 'book';
   }
   // 2. Brilliant move: sound sacrifice that maintains advantage without already being overwhelmingly won
   else if (
     isSacrifice &&
-    (isTopEngineChoice || winPctLoss <= 1.5) &&
+    (isTopEngineChoice || rawWinPctLoss <= 1.5) &&
     playerEvalAfter >= -50 &&
     playerEvalBefore < 700
   ) {
@@ -324,27 +326,30 @@ export function classifyMove({
   // 4. Missed Win / Miss: failing to punish an opponent's blunder or giving back a decisive win
   else if (
     (prevMoveAnalysis &&
+      prevMoveAnalysis.classification !== 'book' &&
       prevMoveAnalysis.winPctLoss >= 10 &&
-      winPctLoss >= prevMoveAnalysis.winPctLoss * 0.6 &&
-      winPctLoss >= 8) ||
-    (playerEvalBefore >= 300 && playerEvalAfter < 100 && winPctLoss >= 15)
+      rawWinPctLoss >= prevMoveAnalysis.winPctLoss * 0.6 &&
+      rawWinPctLoss >= 8) ||
+    (playerEvalBefore >= 300 && playerEvalAfter < 100 && rawWinPctLoss >= 15)
   ) {
     classification = 'missed_win';
   }
   // 5. Standard Expected Points Loss thresholds (Chess.com / Lichess standard)
-  else if (winPctLoss >= 20) {
+  else if (rawWinPctLoss >= 20) {
     classification = 'blunder';
-  } else if (winPctLoss >= 10) {
+  } else if (rawWinPctLoss >= 10) {
     classification = 'mistake';
-  } else if (winPctLoss >= 5) {
+  } else if (rawWinPctLoss >= 5) {
     classification = 'inaccuracy';
-  } else if (isTopEngineChoice || winPctLoss <= 1.5) {
+  } else if (isTopEngineChoice || rawWinPctLoss <= 1.5) {
     classification = 'best';
-  } else if (winPctLoss <= 3.5) {
+  } else if (rawWinPctLoss <= 3.5) {
     classification = 'excellent';
   } else {
     classification = 'good';
   }
+
+  const winPctLoss = classification === 'book' ? 0 : rawWinPctLoss;
 
   return {
     classification,
