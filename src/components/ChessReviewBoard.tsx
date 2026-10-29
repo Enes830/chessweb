@@ -45,15 +45,24 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   onToggleOrientation,
   className = '',
 }) => {
-  const { t, locale, isRtl } = useTranslation();
+  const { t, locale } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isRetryMode, setIsRetryMode] = useState(false);
+  const [retryMove, setRetryMove] = useState<MoveAnalysis | null>(null);
   const [retryStatus, setRetryStatus] = useState<'idle' | 'success' | 'incorrect'>('idle');
   const [showSolution, setShowSolution] = useState(false);
   const [retryPositionFen, setRetryPositionFen] = useState<string | null>(null);
 
   const totalPlies = moves.length;
   const currentMove = currentPly > 0 ? moves[currentPly - 1] : null;
+  const isRetryMode = retryMove !== null && retryMove === currentMove;
+
+  // A move-list/graph selection must end the previous exercise as well.
+  useEffect(() => {
+    setRetryMove(null);
+    setRetryStatus('idle');
+    setShowSolution(false);
+    setRetryPositionFen(null);
+  }, [currentMove]);
 
   // Determine current FEN to display on board
   const boardFen = useMemo(() => {
@@ -84,22 +93,23 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
+      if ((e.target as HTMLElement)?.closest('input, textarea, select, button, a, [contenteditable="true"]')) {
         return;
       }
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         setIsPlaying(false);
-        setIsRetryMode(false);
+        setRetryMove(null);
         if (currentPly > 0) onSelectPly(currentPly - 1);
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         setIsPlaying(false);
-        setIsRetryMode(false);
+        setRetryMove(null);
         if (currentPly < totalPlies) onSelectPly(currentPly + 1);
       } else if (e.key === ' ') {
         e.preventDefault();
+        setRetryMove(null);
         setIsPlaying((prev) => !prev);
       }
     };
@@ -110,7 +120,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
   const handleStartRetry = () => {
     if (!currentMove) return;
-    setIsRetryMode(true);
+    setRetryMove(currentMove);
     setRetryStatus('idle');
     setShowSolution(false);
     setRetryPositionFen(currentMove.fenBefore);
@@ -118,7 +128,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   };
 
   const handleCancelRetry = () => {
-    setIsRetryMode(false);
+    setRetryMove(null);
     setRetryStatus('idle');
     setShowSolution(false);
     setRetryPositionFen(null);
@@ -131,7 +141,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
     sourceSquare: string;
     targetSquare: string | null;
   }) => {
-    if (!isRetryMode || !currentMove || !targetSquare) return false;
+    if (!isRetryMode || !currentMove || !targetSquare || retryStatus === 'success') return false;
 
     try {
       const chess = new Chess(currentMove.fenBefore);
@@ -150,10 +160,12 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
       if (isCorrect) {
         setRetryPositionFen(chess.fen());
         setRetryStatus('success');
+        setShowSolution(false);
         confetti({
           particleCount: 50,
           spread: 60,
           origin: { y: 0.6 },
+          disableForReducedMotion: true,
         });
       } else {
         setRetryStatus('incorrect');
@@ -168,7 +180,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   const customArrows: Arrow[] = useMemo(() => {
     const arrows: Arrow[] = [];
 
-    if (isRetryMode && showSolution && currentMove?.bestMoveUci) {
+    if (isRetryMode && retryStatus !== 'success' && showSolution && currentMove?.bestMoveUci) {
       const best = currentMove.bestMoveUci;
       if (best.length >= 4) {
         arrows.push({
@@ -190,19 +202,20 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
       const showEngineSuggestion =
         ['blunder', 'mistake', 'missed_win', 'inaccuracy'].includes(
           currentMove.classification
-        ) && currentMove.bestMoveUci;
+        ) && currentMove.bestMoveUci && currentMove.bestMoveUci.length >= 4 &&
+        currentMove.bestMoveUci.slice(0, 4) !== currentMove.uci.slice(0, 4);
 
-      if (showEngineSuggestion && currentMove.bestMoveUci.length >= 4) {
+      if (showEngineSuggestion) {
         arrows.push({
           startSquare: currentMove.bestMoveUci.slice(0, 2),
           endSquare: currentMove.bestMoveUci.slice(2, 4),
-          color: 'rgba(34, 197, 94, 0.75)',
+          color: 'rgba(34, 197, 94, 0.85)',
         });
       }
     }
 
     return arrows;
-  }, [isRetryMode, showSolution, currentMove]);
+  }, [isRetryMode, retryStatus, showSolution, currentMove]);
 
   const squareRenderer = useCallback(
     ({
@@ -240,7 +253,8 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
   const isCurrentMistake =
     currentMove &&
-    ['blunder', 'mistake', 'missed_win'].includes(currentMove.classification);
+    ['blunder', 'mistake', 'missed_win', 'inaccuracy'].includes(currentMove.classification) &&
+    /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(currentMove.bestMoveUci);
 
   return (
     <div className={`flex flex-col items-center select-none ${className}`}>
@@ -254,14 +268,14 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
         />
 
         {/* Board Container */}
-        <div className="relative w-full max-w-[500px] sm:max-w-[540px] aspect-square rounded-xl overflow-hidden shadow-xl border border-white/[0.08] bg-slate-950">
+        <div dir="ltr" className="relative w-full max-w-[500px] sm:max-w-[540px] aspect-square rounded-xl overflow-hidden shadow-xl border border-white/[0.08] bg-slate-950">
           <Chessboard
             options={{
               position: boardFen,
               boardOrientation: orientation,
               arrows: customArrows,
               squareRenderer,
-              allowDragging: isRetryMode,
+              allowDragging: isRetryMode && retryStatus !== 'success',
               onPieceDrop: handlePieceDrop,
               boardStyle: {
                 borderRadius: '12px',
@@ -271,9 +285,114 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
             }}
           />
 
-          {/* Retry Mode Overlay Banner */}
+
+        </div>
+      </div>
+
+      {/* Board Controls Bar */}
+      <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2.5 bg-slate-900/80 border border-white/[0.08] rounded-xl">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5">
+        {/* Left: Orientation & Retry */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onToggleOrientation}
+            title={t('flipBoard')}
+            aria-label={t('flipBoard')}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+
+          {isCurrentMistake && !isRetryMode && (
+            <button
+              onClick={handleStartRetry}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/25 text-xs font-medium transition-colors"
+            >
+              <Target className="w-3 h-3" />
+              <span>{t('retryMistake')}</span>
+            </button>
+          )}
+        </div>
+
+        {/* Center: Stepping Controls */}
+        <div className="flex items-center gap-0.5" dir="ltr">
+          <button
+            onClick={() => {
+              setIsPlaying(false);
+              setRetryMove(null);
+              onSelectPly(0);
+            }}
+            disabled={currentPly === 0}
+            title={t('firstMove')}
+            aria-label={t('firstMove')}
+            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
+          >
+            <SkipBack className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={() => {
+              setIsPlaying(false);
+              setRetryMove(null);
+              if (currentPly > 0) onSelectPly(currentPly - 1);
+            }}
+            disabled={currentPly === 0}
+            title={t('prevMove')}
+            aria-label={t('prevMove')}
+            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => {
+              handleCancelRetry();
+              setIsPlaying((prev) => !prev);
+            }}
+            title={isPlaying ? t('pause') : t('autoPlay')}
+            aria-label={isPlaying ? t('pause') : t('autoPlay')}
+            className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/[0.06] transition-colors mx-1"
+          >
+            {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+          </button>
+
+          <button
+            onClick={() => {
+              setIsPlaying(false);
+              setRetryMove(null);
+              if (currentPly < totalPlies) onSelectPly(currentPly + 1);
+            }}
+            disabled={currentPly === totalPlies}
+            title={t('nextMove')}
+            aria-label={t('nextMove')}
+            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => {
+              setIsPlaying(false);
+              setRetryMove(null);
+              onSelectPly(totalPlies);
+            }}
+            disabled={currentPly === totalPlies}
+            title={t('lastMove')}
+            aria-label={t('lastMove')}
+            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
+          >
+            <SkipForward className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Right: Step Counter */}
+        <div className="text-[11px] font-mono text-slate-400 px-1" dir="ltr">
+          {currentPly}/{totalPlies}
+        </div>
+      </div>
+          {/* Retry instructions and feedback stay below the board. */}
           {isRetryMode && (
-            <div className="absolute top-2 left-2 right-2 z-30 bg-slate-950/95 backdrop-blur border border-white/[0.1] rounded-lg p-3 shadow-xl">
+            <div className="border-t border-white/[0.08] p-3">
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-1.5">
                   <Target className="w-3.5 h-3.5 text-amber-400" />
@@ -305,8 +424,9 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                 )}
               </div>
 
+              <div role="status" aria-live="polite" aria-atomic="true">
               {retryStatus === 'success' && (
-                <div className="mt-2 p-2 rounded bg-emerald-950/50 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300 font-medium">
+                <div className="mt-2 p-2 rounded bg-emerald-950/50 border border-emerald-500/30 flex flex-wrap gap-2 items-center justify-between text-xs text-emerald-300 font-medium">
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                     <span>
@@ -323,7 +443,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               )}
 
               {retryStatus === 'incorrect' && (
-                <div className="mt-2 p-2 rounded bg-red-950/50 border border-red-500/30 flex items-center justify-between text-xs text-red-300">
+                <div className="mt-2 p-2 rounded bg-red-950/50 border border-red-500/30 flex flex-wrap gap-2 items-center justify-between text-xs text-red-300">
                   <div className="flex items-center gap-1.5">
                     <XCircle className="w-3.5 h-3.5 text-red-400" />
                     <span>{t('practiceWrong')}</span>
@@ -332,6 +452,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                     onClick={() => {
                       setRetryPositionFen(currentMove?.fenBefore || null);
                       setRetryStatus('idle');
+                      setShowSolution(false);
                     }}
                     className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded text-[11px] border border-white/[0.06]"
                   >
@@ -339,6 +460,8 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                   </button>
                 </div>
               )}
+
+              </div>
 
               {retryStatus !== 'success' && (
                 <div className="mt-2 flex items-center justify-end">
@@ -348,106 +471,13 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                   >
                     <Lightbulb className="w-3 h-3 text-amber-400" />
                     <span>
-                      {t('solution')} ({currentMove?.bestMoveSan})
+                      {t('solution')}{showSolution && ` (${currentMove?.bestMoveSan})`}
                     </span>
                   </button>
                 </div>
               )}
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Board Controls Bar */}
-      <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2.5 flex items-center justify-between bg-slate-900/80 border border-white/[0.08] rounded-xl px-2.5 py-1.5">
-        {/* Left: Orientation & Retry */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onToggleOrientation}
-            title={t('flipBoard')}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-
-          {isCurrentMistake && !isRetryMode && (
-            <button
-              onClick={handleStartRetry}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/25 text-xs font-medium transition-colors"
-            >
-              <Target className="w-3 h-3" />
-              <span>{t('retryMistake')}</span>
-            </button>
-          )}
-        </div>
-
-        {/* Center: Stepping Controls */}
-        <div className="flex items-center gap-0.5" dir="ltr">
-          <button
-            onClick={() => {
-              setIsPlaying(false);
-              setIsRetryMode(false);
-              onSelectPly(0);
-            }}
-            disabled={currentPly === 0}
-            title={t('firstMove')}
-            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
-          >
-            <SkipBack className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={() => {
-              setIsPlaying(false);
-              setIsRetryMode(false);
-              if (currentPly > 0) onSelectPly(currentPly - 1);
-            }}
-            disabled={currentPly === 0}
-            title={t('prevMove')}
-            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => setIsPlaying((prev) => !prev)}
-            title={isPlaying ? t('pause') : t('autoPlay')}
-            className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/[0.06] transition-colors mx-1"
-          >
-            {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            onClick={() => {
-              setIsPlaying(false);
-              setIsRetryMode(false);
-              if (currentPly < totalPlies) onSelectPly(currentPly + 1);
-            }}
-            disabled={currentPly === totalPlies}
-            title={t('nextMove')}
-            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => {
-              setIsPlaying(false);
-              setIsRetryMode(false);
-              onSelectPly(totalPlies);
-            }}
-            disabled={currentPly === totalPlies}
-            title={t('lastMove')}
-            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
-          >
-            <SkipForward className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* Right: Step Counter */}
-        <div className="text-[11px] font-mono text-slate-400 px-1" dir="ltr">
-          {currentPly}/{totalPlies}
-        </div>
       </div>
     </div>
   );
