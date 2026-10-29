@@ -133,10 +133,15 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
 
       <div className="flex items-center justify-between text-xs text-slate-400">
         <div className="font-mono text-[11px]">
-          {!isOptimal && currentMove.bestMoveSan && (
+          {currentMove.bestMoveSan && (
             <span className="text-slate-300">
               {t('bestMoveLabel')}{' '}
               <span className="text-emerald-400 font-semibold">{currentMove.bestMoveSan}</span>
+              {currentMove.bestMoveUci.slice(0, 4) === currentMove.uci.slice(0, 4) && (
+                <span className="ml-1.5 text-[10px] text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded font-sans font-semibold">
+                  ✓ {t('classBest')}
+                </span>
+              )}
             </span>
           )}
         </div>

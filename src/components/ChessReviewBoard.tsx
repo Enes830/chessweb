@@ -39,7 +39,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   onToggleOrientation,
   className = '',
 }) => {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
 
   const totalPlies = moves.length;
@@ -54,8 +54,10 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   }, [currentMove, moves]);
 
   // Current evaluation for EvalBar
-  const currentEvalCp = currentMove ? currentMove.evalAfter : 0;
-  const currentMate = currentMove ? (currentMove.isMateAfter ? currentMove.mateAfter : undefined) : undefined;
+  const currentEvalCp = currentMove ? currentMove.evalAfter : (moves.length > 0 ? moves[0].evalBefore : 0);
+  const currentMate = currentMove
+    ? (currentMove.isMateAfter ? currentMove.mateAfter : undefined)
+    : (moves.length > 0 && moves[0].isMateBefore ? moves[0].mateBefore : undefined);
 
   // Auto-play interval
   useEffect(() => {
@@ -97,28 +99,26 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
     if (!currentMove) return [];
     const arrows: Arrow[] = [];
 
+    // 1. Played move arrow (using classification color)
     if (currentMove.from && currentMove.to) {
       const meta = CLASSIFICATION_META[currentMove.classification];
       arrows.push({
         startSquare: currentMove.from,
         endSquare: currentMove.to,
-        color: meta.color + 'bb',
+        color: meta.color + 'dd',
       });
     }
 
-    const showEngineSuggestion =
-      ['blunder', 'mistake', 'missed_win', 'inaccuracy'].includes(
-        currentMove.classification
-      ) &&
+    // 2. Engine Best Move arrow (shown on EVERY move when played move != best move)
+    if (
       currentMove.bestMoveUci &&
       currentMove.bestMoveUci.length >= 4 &&
-      currentMove.bestMoveUci.slice(0, 4) !== currentMove.uci.slice(0, 4);
-
-    if (showEngineSuggestion) {
+      currentMove.bestMoveUci.slice(0, 4) !== currentMove.uci.slice(0, 4)
+    ) {
       arrows.push({
         startSquare: currentMove.bestMoveUci.slice(0, 2),
         endSquare: currentMove.bestMoveUci.slice(2, 4),
-        color: 'rgba(34, 197, 94, 0.85)',
+        color: 'rgba(16, 185, 129, 0.9)', // Emerald green for top engine move
       });
     }
 
@@ -162,7 +162,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   return (
     <div className={`flex flex-col items-center select-none ${className}`}>
       {/* Board & Eval Bar Row */}
-      <div className="flex items-center justify-center gap-2.5 w-full">
+      <div className="flex items-stretch justify-center gap-2.5 w-full">
         {/* Vertical Eval Bar */}
         <EvalBar
           scoreCp={currentEvalCp}
@@ -188,6 +188,38 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
           />
         </div>
       </div>
+
+      {/* Engine Best Move Status Strip (shown on every move) */}
+      {currentMove && (
+        <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2 px-3 py-1.5 bg-slate-900/90 border border-white/[0.08] rounded-xl flex items-center justify-between text-xs font-mono shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 font-sans font-medium flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              {locale === 'ar' ? 'أفضل نقلة للمحرك:' : 'Best Move:'}
+            </span>
+            <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 tracking-wide">
+              {currentMove.bestMoveSan || currentMove.bestMoveUci}
+            </span>
+            {currentMove.bestMoveUci.slice(0, 4) === currentMove.uci.slice(0, 4) ? (
+              <span className="text-[10px] text-emerald-300 font-sans bg-emerald-500/20 px-1.5 py-0.5 rounded font-semibold border border-emerald-500/30">
+                ✓ {locale === 'ar' ? 'أفضل نقلة ملعوبة' : 'Best Move Played'}
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 font-sans hidden sm:inline">
+                ({locale === 'ar' ? 'ملعوبة:' : 'Played:'} <span className="text-slate-200 font-mono font-medium">{currentMove.san}</span>)
+              </span>
+            )}
+          </div>
+          <div className="text-slate-400 text-[11px] shrink-0">
+            {locale === 'ar' ? 'التقييم:' : 'Eval:'}{' '}
+            <span className="font-semibold text-slate-200">
+              {currentMove.isMateAfter
+                ? (currentMove.mateAfter && currentMove.mateAfter > 0 ? `M${currentMove.mateAfter}` : `-M${Math.abs(currentMove.mateAfter || 1)}`)
+                : (currentMove.evalAfter > 0 ? `+${(currentMove.evalAfter / 100).toFixed(1)}` : (currentMove.evalAfter / 100).toFixed(1))}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Board Controls Bar */}
       <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2.5 bg-slate-900/80 border border-white/[0.08] rounded-xl">
