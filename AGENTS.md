@@ -75,3 +75,4 @@ The main page operates on a 3-stage state machine (`gameState`):
    - Do not delete or hand-edit `public/engine/stockfish.js` or `public/engine/stockfish.wasm`. They are managed by `scripts/copy-stockfish.mjs`.
 5. **Styling**:
    - The app uses a dark slate/emerald aesthetic (`bg-[#0a0d14]`, `bg-slate-900/70`, `border-slate-800/80`). Keep classification colors consistent with `CLASSIFICATION_META` in `src/lib/engine/classifier.ts`.
+
