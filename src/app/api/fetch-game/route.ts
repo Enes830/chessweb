@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractChessComId, extractLichessId, parsePgnToMetadata } from '@/lib/chesscom';
 
+export const maxDuration = 15;
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
