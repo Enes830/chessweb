@@ -1,0 +1,10 @@
+.agents
+.gemini
+.git
+.next
+node_modules
+TIKTOK_CONTENT_PLAN.md
+AGENTS.md
+*.log
+.DS_Store
+

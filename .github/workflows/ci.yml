@@ -1,0 +1,51 @@
+name: CI & Vercel Readiness
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.agents/**'
+      - '.gemini/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.agents/**'
+      - '.gemini/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, WASM Check & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies (triggers Stockfish postinstall)
+        run: npm ci
+
+      - name: Verify Stockfish 19 WASM assets
+        run: |
+          test -s public/engine/stockfish.js
+          test -s public/engine/stockfish.wasm
+          ls -lh public/engine/
+
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Build production Next.js bundle
+        run: npm run build
+

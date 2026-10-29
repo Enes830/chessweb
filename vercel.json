@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/fetch-game/route.ts": {
+      "maxDuration": 15
+    },
+    "src/app/api/explain/route.ts": {
+      "maxDuration": 15
+    }
+  }
+}
+
