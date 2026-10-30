@@ -1,5 +1,7 @@
 'use client';
 
+import { MoveClassificationIcon } from '@/components/MoveClassificationIcon';
+
 import React, { useState, useEffect } from 'react';
 import { MoveAnalysis, MoveClassification } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
@@ -99,7 +101,7 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
               border: `1px solid ${meta.color}30`,
             }}
           >
-            <span>{meta.symbol}</span>
+            <MoveClassificationIcon classification={currentMove.classification} size={22} decorative />
             <span>{localizedClassName}</span>
           </span>
 
@@ -138,7 +140,7 @@ export const CoachBanner: React.FC<CoachBannerProps> = ({
             <span className="text-emerald-400 font-semibold">
               {currentMove.bestMoveSan || currentMove.bestMoveUci || currentMove.san}
             </span>
-            {currentMove.bestMoveUci.slice(0, 4) === currentMove.uci.slice(0, 4) && (
+            {currentMove.bestMoveUci === currentMove.uci && (
               <span className="ml-1.5 text-[10px] text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded font-sans font-semibold">
                 ✓ {t('classBest')}
               </span>

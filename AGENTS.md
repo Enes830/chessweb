@@ -6,7 +6,7 @@ This document provides architectural context, invariants, conventions, and workf
 
 ## 1. Project Overview
 
-**RewindBoard** is a Next.js (App Router) + React 19 + TypeScript web application that performs 100% client-side chess game reviews using **Stockfish 19 WebAssembly**. Users can import games via Chess.com username, Chess.com/Lichess game URLs, raw PGN, or curated presets, and receive a full move-by-move breakdown (Brilliant `!!`, Great `!`, Best, Excellent, Good, Book, Inaccuracy `?!`, Mistake `?`, Blunder `??`, Missed Win), CAPS accuracy, estimated performance Elo, bilingual coaching explanations (`en` / `ar`), and exportable tactical puzzles for a companion Telegram Bot.
+**RewindBoard** is a Next.js (App Router) + React 19 + TypeScript web application that performs 100% client-side chess game reviews using **Stockfish 19 WebAssembly**. Users can import games via Chess.com username, Chess.com/Lichess game URLs, raw PGN, or curated presets, and receive a full move-by-move breakdown (Brilliant `!!`, Great `!`, Best, Excellent, Good, Book, Inaccuracy `?!`, Mistake `?`, Blunder `??`, Missed Win), Lichess-based accuracy, bilingual coaching explanations (`en` / `ar`), and exportable tactical puzzles for a companion Telegram Bot.
 
 ---
 
@@ -27,7 +27,7 @@ This document provides architectural context, invariants, conventions, and workf
 ### State Machine (`src/app/page.tsx`)
 The main page operates on a 3-stage state machine (`gameState`):
 1. `'import'`: Renders `<GameImporter />` (Omnibox search, PGN textarea, or preset library).
-2. `'analyzing'`: Replays the PGN via `chess.js`, builds an array of `N + 1` FEN positions (from initial board through final ply), and streams evaluations from `StockfishWorkerClient.evaluateGamePositions(fenList, 14, 3)`.
+2. `'analyzing'`: Replays the PGN via `chess.js`, builds an array of `N + 1` FEN positions (from initial board through final ply), and streams evaluations from `StockfishWorkerClient.evaluateGamePositions(fenList, 16, 3)`.
 3. `'reviewed'`: Renders the interactive review dashboard (`<EvalBar />`, `<ChessReviewBoard />`, `<CoachBanner />`, `<ReviewSummary />`, `<EvalGraph />`, `<MoveList />`, and `<TelegramBridgeModal />`).
 
 ### Engine & UCI Web Worker (`src/lib/engine/workerClient.ts`)
@@ -37,15 +37,17 @@ The main page operates on a 3-stage state machine (`gameState`):
 
 ### Move Classifier (`src/lib/engine/classifier.ts`)
 - `classifyMove()` converts White-perspective evaluations (`evalBeforeWhite`, `evalAfterWhite`) into the **moving player's perspective** using `sign = turn === 'w' ? 1 : -1`.
-- **Same-Root MultiPV Horizon Correction**: When a user's played move matches one of the top MultiPV lines from `evalBeforeObj.multiPVEvals`, `classifyMove()` compares same-root evaluation loss against cross-ply evaluation loss (`evalBefore` vs `evalAfter`) and uses the smaller loss. This prevents Stockfish odd/even ply horizon fluctuations from falsely penalizing top moves.
+- **Same-Root MultiPV Horizon Correction**: Uses exact UCI matching (including promotions) to reduce horizon noise in non-terminal positions with unchanged mate status. Corrected loss never replaces raw engine evaluations in reports.
+- **Scoring**: Public Chess.com loss bands applied to a documented Lichess win-chance proxy, not the private rating-dependent model. See `docs/analysis-methodology.md`. Unsupported performance Elo has been removed.
 - **Sacrifice Detection (`isMaterialSacrifice`)**: Uses a dual-stage verification:
   1. Static Exchange Evaluation (`SEE`) ported from *Brilliant-Chess* (`exchangeGain`, `couldBeSaved`, `hasLastingOffer`) with node budgets to prevent UI freezes.
   2. *WintrCat/freechess* hanging piece & unpinned attacker capture viability (`isPieceHanging`, `getAttackers`, `getDefenders`).
-- **Opening Book Backfilling**: In `src/app/page.tsx`, the deepest book match up to `ply <= 24` backfills earlier connecting moves (`forceBook: true`), while `classifier.ts` verifies `isSafeForBook` (`evalLoss <= 120` and not walking into forced mate) so opening blunders are never masked as `book`.
+- **Opening Book**: Only exact legal positions within 24 plies and under 2 percentage points of loss qualify. Do not backfill unknown moves or ignore castling/turn/en-passant state.
 
 ### Opening Book (`src/lib/openings.ts` & `src/lib/openingsData.json`)
-- Combines `3,402` ECO FEN entries in `openingsData.json`, `BASE_OPENINGS`, and `OPENING_LINES` (which indexes every intermediate ply along major ECO variations).
-- `lookupOpening(fen)` executes in $O(1)$ time via `OPENING_MAP` (`<board> <turn>`) and `BOARD_ONLY_MAP` (`<board>`).
+- Contains 7,982 legal positions generated from the CC0 `lichess-org/chess-openings` PGN database, including intermediate moves.
+- `lookupOpening(fen)` uses the first four FEN fields. Refresh with `node scripts/update-openings.mjs`.
+- Regression tests: `npm test`; strict type check: `npx tsc --noEmit`.
 
 ### Coaching Explanations (`src/lib/coachExplainer.ts` & `src/app/api/explain/route.ts`)
 - `generateHeuristicExplanation(move, locale)` synchronously creates deterministic tactical explanations in both English (`'en'`) and Arabic (`'ar'`).

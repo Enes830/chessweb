@@ -1,10 +1,11 @@
 'use client';
 
+import { MoveClassificationIcon } from '@/components/MoveClassificationIcon';
+
 import React from 'react';
 import { GameReviewReport, MoveClassification } from '@/types/chess';
-import { CLASSIFICATION_META } from '@/lib/engine/classifier';
 import { useTranslation } from '@/lib/i18n/LanguageContext';
-import { Send, RotateCcw, TrendingUp } from 'lucide-react';
+import { Send, RotateCcw } from 'lucide-react';
 
 interface ReviewSummaryProps {
   report: GameReviewReport;
@@ -24,8 +25,6 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
     metadata,
     whiteAccuracy,
     blackAccuracy,
-    whiteEstimatedElo,
-    blackEstimatedElo,
     classificationsCount,
   } = report;
 
@@ -86,15 +85,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
             </div>
           </div>
 
-          <div className="mt-2.5 pt-2 border-t border-white/[0.06] flex items-center justify-between text-xs">
-            <span className="text-slate-400 text-[11px] flex items-center gap-1">
-              <TrendingUp className="w-3 h-3 text-slate-400" />
-              {t('perfRating')}
-            </span>
-            <span className="font-mono text-xs font-semibold text-slate-200">
-              {whiteEstimatedElo}
-            </span>
-          </div>
+
         </div>
 
         {/* Black Player Card */}
@@ -124,17 +115,11 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
             </div>
           </div>
 
-          <div className="mt-2.5 pt-2 border-t border-white/[0.06] flex items-center justify-between text-xs">
-            <span className="text-slate-400 text-[11px] flex items-center gap-1">
-              <TrendingUp className="w-3 h-3 text-slate-400" />
-              {t('perfRating')}
-            </span>
-            <span className="font-mono text-xs font-semibold text-slate-200">
-              {blackEstimatedElo}
-            </span>
-          </div>
+
         </div>
       </div>
+
+      <p className="text-xs text-slate-400">{t('analysisMethodNote')}</p>
 
       {/* Move Breakdown Matrix */}
       <div className="bg-slate-900/80 border border-white/[0.08] rounded-xl p-3">
@@ -146,7 +131,6 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
 
         <div className="divide-y divide-white/[0.04] text-xs">
           {classificationOrder.map((type) => {
-            const meta = CLASSIFICATION_META[type];
             const wCount = classificationsCount.white[type] || 0;
             const bCount = classificationsCount.black[type] || 0;
             const localizedName = t(classKeyMap[type]);
@@ -157,16 +141,7 @@ export const ReviewSummary: React.FC<ReviewSummaryProps> = ({
                 className="grid grid-cols-[1fr_45px_45px] items-center py-1.5 px-1 hover:bg-white/[0.02] transition-colors"
               >
                 <div className="flex items-center gap-2">
-                  <span
-                    className="inline-flex items-center justify-center min-w-[28px] h-4 px-1 rounded text-[10px] font-mono font-bold"
-                    style={{
-                      color: meta.color,
-                      backgroundColor: `${meta.color}15`,
-                      border: `1px solid ${meta.color}30`,
-                    }}
-                  >
-                    {meta.symbol}
-                  </span>
+                  <MoveClassificationIcon classification={type} size={22} decorative />
                   <span className="text-slate-300 font-medium text-xs">{localizedName}</span>
                 </div>
                 <span

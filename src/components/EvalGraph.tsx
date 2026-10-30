@@ -1,5 +1,7 @@
 'use client';
 
+import { MoveClassificationIcon } from '@/components/MoveClassificationIcon';
+
 import React from 'react';
 import {
   AreaChart,
@@ -10,7 +12,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-import { MoveAnalysis } from '@/types/chess';
+import { MoveAnalysis, MoveClassification } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
 
 interface EvalGraphProps {
@@ -26,8 +28,7 @@ interface ChartPoint {
   evalPawns: number;
   san: string;
   turn: 'w' | 'b';
-  classification?: string;
-  badgeSymbol?: string;
+  classification?: MoveClassification;
   badgeColor?: string;
 }
 
@@ -64,7 +65,6 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
         san: m.san,
         turn: m.turn,
         classification: m.classification,
-        badgeSymbol: meta?.symbol,
         badgeColor: meta?.color,
       };
     }),
@@ -146,15 +146,15 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
         </span>
         <div className="flex items-center gap-2.5 text-[11px] text-slate-400 font-mono">
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-teal-500 inline-block" />
+            <MoveClassificationIcon classification="brilliant" size={16} decorative />
             <span>Brilliant</span>
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" />
+            <MoveClassificationIcon classification="mistake" size={16} decorative />
             <span>Mistake</span>
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+            <MoveClassificationIcon classification="blunder" size={16} decorative />
             <span>Blunder</span>
           </span>
         </div>
@@ -193,15 +193,7 @@ export const EvalGraph: React.FC<EvalGraphProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-slate-300 font-semibold">{evalStr}</span>
                         {pt.classification && (
-                          <span
-                            className="px-1 py-0.2 rounded text-[10px] font-mono font-medium"
-                            style={{
-                              backgroundColor: `${pt.badgeColor}20`,
-                              color: pt.badgeColor,
-                            }}
-                          >
-                            {pt.badgeSymbol}
-                          </span>
+                          <MoveClassificationIcon classification={pt.classification} size={20} />
                         )}
                       </div>
                     </div>

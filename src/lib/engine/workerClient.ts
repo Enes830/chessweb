@@ -18,7 +18,12 @@ interface QueuedTask {
 export class StockfishWorkerClient {
   private worker: Worker | null = null;
   private isReady: boolean = false;
-  private readyResolvers: Array<() => void> = [];
+  private readyResolvers: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+  private readyTimer?: ReturnType<typeof setTimeout>;
+  private searchTimer?: ReturnType<typeof setTimeout>;
+  private failure: Error | null = null;
+  private draining = false;
+  private generation = 0;
   private currentTask: QueuedTask | null = null;
   private taskQueue: QueuedTask[] = [];
   private isProcessing: boolean = false;
@@ -32,7 +37,7 @@ export class StockfishWorkerClient {
   private isTerminated: boolean = false;
   private currentMultiPV: number = 3;
 
-  constructor() {
+  constructor(private readonly timeouts = { ready: 30000, search: 120000, stop: 5000 }) {
     if (typeof window !== 'undefined') {
       this.initWorker();
     }
@@ -50,7 +55,10 @@ export class StockfishWorkerClient {
       };
 
       this.worker.onerror = (err) => {
-        console.error('Stockfish Worker error:', err);
+        this.fail(new Error(err.message || 'Stockfish worker failed'));
+      };
+      this.worker.onmessageerror = () => {
+        this.fail(new Error('Invalid Stockfish worker response'));
       };
 
       // Send initial UCI handshake
@@ -60,36 +68,75 @@ export class StockfishWorkerClient {
       this.send('setoption name MultiPV value 3');
       this.send('isready');
     } catch (e) {
-      console.error('Failed to instantiate Stockfish worker:', e);
+      this.fail(e instanceof Error ? e : new Error('Stockfish could not start'));
     }
   }
 
   private send(cmd: string) {
     if (this.worker && !this.isTerminated) {
-      this.worker.postMessage(cmd);
+      try {
+        this.worker.postMessage(cmd);
+      } catch (error) {
+        this.fail(error instanceof Error ? error : new Error('Stockfish communication failed'));
+      }
     }
   }
 
+  public get unavailable(): boolean {
+    return this.isTerminated || this.failure !== null;
+  }
+
+  private fail(error: Error) {
+    this.failure = error;
+    this.isReady = false;
+    clearTimeout(this.readyTimer);
+    clearTimeout(this.searchTimer);
+    this.readyResolvers.splice(0).forEach(waiter => waiter.reject(error));
+    this.currentTask?.reject(error);
+    this.currentTask = null;
+    this.taskQueue.splice(0).forEach(task => task.reject(error));
+    this.isProcessing = false;
+    this.draining = false;
+    this.worker?.terminate();
+    this.worker = null;
+  }
+
   public async waitReady(): Promise<void> {
+    if (this.unavailable) throw this.failure ?? new Error('Analysis terminated');
     if (this.isReady) return;
-    return new Promise<void>((resolve) => {
-      this.readyResolvers.push(resolve);
+    return new Promise<void>((resolve, reject) => {
+      this.readyResolvers.push({ resolve, reject });
+      if (!this.readyTimer) {
+        this.readyTimer = setTimeout(() => this.fail(new Error('Stockfish startup timed out')), this.timeouts.ready);
+      }
       this.send('isready');
     });
   }
 
   private handleUciLine(line: string) {
     line = line.trim();
-    if (!line) return;
+    if (!line || this.unavailable) return;
 
     if (line === 'readyok') {
       this.isReady = true;
+      clearTimeout(this.readyTimer);
+      this.readyTimer = undefined;
       while (this.readyResolvers.length > 0) {
         const r = this.readyResolvers.shift();
-        r?.();
+        r?.resolve();
       }
       return;
     }
+
+    if (this.draining) {
+      if (line.startsWith('bestmove')) {
+        clearTimeout(this.searchTimer);
+        this.draining = false;
+        this.processNextTask();
+      }
+      return;
+    }
+    if (!this.currentTask) return;
 
     // Parse info depth ... score cp / mate ... multipv ... pv ...
     if (line.startsWith('info ') && line.includes('score ')) {
@@ -99,6 +146,7 @@ export class StockfishWorkerClient {
 
     // Search finished for current position
     if (line.startsWith('bestmove')) {
+      clearTimeout(this.searchTimer);
       const parts = line.split(/\s+/);
       const uciBestMove = parts[1] || '';
 
@@ -111,22 +159,9 @@ export class StockfishWorkerClient {
       }
 
       if (this.currentTask) {
-        // Fallback: if bestMove is still empty on a non-terminal position, pick the first legal move
-        if (!this.currentEvalResult.bestMove) {
-          try {
-            const chess = new Chess(this.currentTask.fen);
-            const legalMoves = chess.moves({ verbose: true });
-            if (legalMoves.length > 0) {
-              const first = legalMoves[0];
-              const fallbackUci = `${first.from}${first.to}${first.promotion || ''}`;
-              this.currentEvalResult.bestMove = fallbackUci;
-              if (this.currentEvalResult.pv.length === 0) {
-                this.currentEvalResult.pv = [fallbackUci];
-              }
-            }
-          } catch {
-            // Terminal or invalid FEN
-          }
+        if (!this.currentEvalResult.bestMove || this.currentEvalResult.depth === 0) {
+          this.fail(new Error('Stockfish returned no usable evaluation'));
+          return;
         }
 
         // Sort multiPV evals by pvIndex
@@ -145,7 +180,7 @@ export class StockfishWorkerClient {
   private parseInfoLine(line: string) {
     // Ignore partial aspiration window fail-high / fail-low bound lines
     const isBound = line.includes('upperbound') || line.includes('lowerbound');
-    if (isBound && this.currentEvalResult.depth > 0) {
+    if (isBound) {
       return;
     }
 
@@ -191,7 +226,7 @@ export class StockfishWorkerClient {
 
     // Convert mate to high centipawns for scoreCp so all downstream consumers have a numeric scale
     if (mate !== undefined && scoreCp === undefined) {
-      scoreCp = mate > 0 ? (10000 - Math.abs(mate) * 100) : (-10000 + Math.abs(mate) * 100);
+      scoreCp = (mate > 0 ? 1 : -1) * Math.max(1000, 10000 - Math.abs(mate) * 100);
     }
 
     // Update main eval if multipv === 1 and depth has progressed
@@ -217,7 +252,9 @@ export class StockfishWorkerClient {
     }
 
     const existingPvIdx = this.currentEvalResult.multiPVEvals.findIndex((p) => p.pvIndex === multiPV);
+    if (existingPvIdx >= 0 && depth < (this.currentEvalResult.multiPVEvals[existingPvIdx].depth ?? 0)) return;
     const pvData = {
+      depth,
       pvIndex: multiPV,
       scoreCp,
       mate,
@@ -248,7 +285,9 @@ export class StockfishWorkerClient {
     depth: number = 16,
     multiPV: number = 3
   ): Promise<EngineEvalResult> {
+    const generation = this.generation;
     await this.waitReady();
+    if (generation !== this.generation || this.unavailable) throw new Error('Evaluation cancelled');
 
     return new Promise<EngineEvalResult>((resolve, reject) => {
       this.taskQueue.push({
@@ -275,15 +314,16 @@ export class StockfishWorkerClient {
     multiPV: number = 3,
     onPartial?: (result: EngineEvalResult) => void
   ): Promise<EngineEvalResult> {
+    const generation = this.generation;
     await this.waitReady();
+    if (generation !== this.generation || this.unavailable) throw new Error('Evaluation cancelled');
 
-    // Cancel existing live task if in progress
-    if (this.currentTask?.isLive) {
-      this.send('stop');
-      this.currentTask = null;
-    }
-    // Remove stale live tasks
-    this.taskQueue = this.taskQueue.filter((t) => !t.isLive);
+    if (this.currentTask?.isLive) this.cancelCurrent();
+    this.taskQueue = this.taskQueue.filter(task => {
+      if (!task.isLive) return true;
+      task.reject(new Error('Evaluation cancelled'));
+      return false;
+    });
 
     return new Promise<EngineEvalResult>((resolve, reject) => {
       const task: QueuedTask = {
@@ -305,6 +345,7 @@ export class StockfishWorkerClient {
   }
 
   private processNextTask() {
+    if (this.unavailable || this.draining) return;
     if (this.taskQueue.length === 0) {
       this.isProcessing = false;
       this.currentTask = null;
@@ -339,7 +380,10 @@ export class StockfishWorkerClient {
         return;
       }
     } catch {
-      // Proceed to engine if FEN check fails
+      currentTask.reject(new Error('Invalid analysis position'));
+      this.currentTask = null;
+      this.processNextTask();
+      return;
     }
 
     this.currentEvalResult = {
@@ -354,28 +398,36 @@ export class StockfishWorkerClient {
       this.currentMultiPV = currentTask.multiPV;
       this.send(`setoption name MultiPV value ${currentTask.multiPV}`);
     }
+    this.searchTimer = setTimeout(() => this.fail(new Error('Stockfish evaluation timed out')), this.timeouts.search);
     this.send(`position fen ${currentTask.fen}`);
     this.send(`go depth ${currentTask.depth}`);
   }
 
-  public stopAndClearQueue() {
-    this.taskQueue.forEach((task) => {
-      task.reject(new Error('Evaluation cancelled'));
-    });
-    this.taskQueue = [];
+  private cancelCurrent() {
+    if (!this.currentTask) return;
+    this.currentTask.reject(new Error('Evaluation cancelled'));
     this.currentTask = null;
-    this.isProcessing = false;
+    this.draining = true;
+    clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => this.fail(new Error('Stockfish cancellation timed out')), this.timeouts.stop);
+    // Do not launch another search until the stopped search's bestmove arrives.
     this.send('stop');
   }
 
+  public stopAndClearQueue() {
+    this.generation++;
+    clearTimeout(this.readyTimer);
+    this.readyTimer = undefined;
+    this.readyResolvers.splice(0).forEach(waiter => waiter.reject(new Error('Evaluation cancelled')));
+    this.taskQueue.splice(0).forEach(task => task.reject(new Error('Evaluation cancelled')));
+    this.cancelCurrent();
+  }
+
   public terminate() {
+    this.generation++;
+    this.send('quit');
     this.isTerminated = true;
-    this.stopAndClearQueue();
-    if (this.worker) {
-      this.send('quit');
-      this.worker.terminate();
-      this.worker = null;
-    }
+    this.fail(new Error('Analysis terminated'));
   }
 
   /**
@@ -387,7 +439,10 @@ export class StockfishWorkerClient {
     multiPV: number = 3,
     onProgress?: EvalProgressCallback
   ): Promise<EngineEvalResult[]> {
-    // Reset engine hash table for clean deterministic evaluation of the game
+    const generation = this.generation;
+    await this.waitReady();
+    if (generation !== this.generation || this.unavailable) throw new Error('Evaluation cancelled');
+    // Reset the hash between games.
     this.send('ucinewgame');
     this.isReady = false;
     await this.waitReady();
@@ -396,7 +451,7 @@ export class StockfishWorkerClient {
     const total = fens.length;
 
     for (let i = 0; i < total; i++) {
-      if (this.isTerminated) {
+      if (this.unavailable || generation !== this.generation) {
         throw new Error('Analysis terminated');
       }
 
@@ -418,7 +473,7 @@ export class StockfishWorkerClient {
 let clientInstance: StockfishWorkerClient | null = null;
 
 export function getStockfishClient(): StockfishWorkerClient {
-  if (!clientInstance) {
+  if (!clientInstance || clientInstance.unavailable) {
     clientInstance = new StockfishWorkerClient();
   }
   return clientInstance;

@@ -1,5 +1,7 @@
 'use client';
 
+import { MoveClassificationIcon } from '@/components/MoveClassificationIcon';
+
 import React, { useEffect, useRef } from 'react';
 import { MoveAnalysis } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
@@ -58,18 +60,7 @@ export const MoveList: React.FC<MoveListProps> = ({
     const meta = CLASSIFICATION_META[move.classification];
     if (!meta) return null;
 
-    return (
-      <span
-        title={`${meta.name}: ${meta.description}`}
-        className="inline-flex items-center justify-center text-[9px] font-mono font-bold px-1 py-0.2 rounded mx-1 shrink-0"
-        style={{
-          color: meta.color,
-          backgroundColor: `${meta.color}15`,
-        }}
-      >
-        {meta.symbol}
-      </span>
-    );
+    return <MoveClassificationIcon classification={move.classification} size={20} className="mx-1" />;
   };
 
   return (

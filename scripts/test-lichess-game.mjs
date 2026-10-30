@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { Chess } from 'chess.js';
-import { classifyMove, calculatePlayerAccuracy, estimateEloFromAccuracy } from '../src/lib/engine/classifier.ts';
+import { classifyMove, calculatePlayerAccuracy } from '../src/lib/engine/classifier.ts';
 import { lookupOpening } from '../src/lib/openings.ts';
 
 const data = JSON.parse(fs.readFileSync('/tmp/lichess_game.json', 'utf-8'));
@@ -136,12 +136,8 @@ for (let i = 0; i < moveSteps.length; i++) {
 
 const wAcc = calculatePlayerAccuracy(analyzedMoves, 'w');
 const bAcc = calculatePlayerAccuracy(analyzedMoves, 'b');
-const wElo = estimateEloFromAccuracy(wAcc, analyzedMoves, 'w');
-const bElo = estimateEloFromAccuracy(bAcc, analyzedMoves, 'b');
 
-console.log('\n=== FINAL ACCURACY & ELO SUMMARY ===');
+console.log('\n=== FINAL ACCURACY SUMMARY ===');
 console.log(`White (${data.players.white.user.name} - Rating: ${data.players.white.rating}):`);
-console.log(`  Accuracy: ${wAcc}% | Estimated Game Rating: ${wElo}`);
 console.log(`Black (${data.players.black.user.name} - Rating: ${data.players.black.rating}):`);
-console.log(`  Accuracy: ${bAcc}% | Estimated Game Rating: ${bElo}`);
 console.log(`Judgment Alignment with Lichess Server: ${matchCount}/${totalJudged} (${Math.round((matchCount/totalJudged)*100)}%)`);

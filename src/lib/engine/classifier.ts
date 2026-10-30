@@ -90,116 +90,53 @@ export const CLASSIFICATION_META: Record<MoveClassification, ClassificationMeta>
   },
 };
 
-/**
- * Standard Lichess / Chess.com sigmoid formula converting centipawns to Win Percentage (0-100%)
- */
+/** Lichess's public win-chance proxy; not Chess.com's private rating model. */
 export function cpToWinPct(cp: number): number {
-  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
+  return 100 / (1 + Math.exp(-0.00368208 * cp));
 }
 
-/**
- * Calculates CAPS-style move accuracy (0-100%) from win% loss
- */
+/** Public Lichess move-accuracy curve, without intermediate rounding. */
 export function calculateMoveAccuracy(winPctLoss: number): number {
   if (winPctLoss <= 0) return 100;
-  const raw = 103.1668 * Math.exp(-0.04354 * winPctLoss) - 3.1669;
-  return Math.max(0, Math.min(100, Math.round(raw * 10) / 10));
+  return Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * winPctLoss) - 3.1669));
 }
 
-/**
- * Classification weight values from WintrCat/freechess (used alongside CAPS win% accuracy)
- */
-const CLASSIFICATION_WEIGHTS: Record<MoveClassification, number> = {
-  brilliant: 1,
-  great: 1,
-  best: 1,
-  book: 1,
-  excellent: 0.92,
-  good: 0.72,
-  inaccuracy: 0.45,
-  missed_win: 0.25,
-  mistake: 0.2,
-  blunder: 0,
-};
-
-/**
- * Calculates player overall accuracy combining CAPS exponential win% accuracy and WintrCat classification weights
+/** Volatility-weighted mean combined with harmonic mean, following Lichess's
+ * published game-accuracy methodology. Labels never add penalties or bonuses.
  */
 export function calculatePlayerAccuracy(moves: MoveAnalysis[], color: 'w' | 'b'): number {
-  const playerMoves = moves.filter((m) => m.turn === color);
-  if (playerMoves.length === 0) return 100;
-
-  const total = playerMoves.reduce((acc, m) => {
-    let capsAcc = calculateMoveAccuracy(m.winPctLoss);
-    // Severe penalty cap for tactical mistakes regardless of sigmoid flatness in lost/winning positions
-    if (m.classification === 'blunder') {
-      capsAcc = Math.min(capsAcc, 10);
-    } else if (m.classification === 'mistake') {
-      capsAcc = Math.min(capsAcc, 35);
-    } else if (m.classification === 'missed_win') {
-      capsAcc = Math.min(capsAcc, 40);
-    } else if (m.classification === 'inaccuracy') {
-      capsAcc = Math.min(capsAcc, 65);
-    }
-    const weightAcc = (CLASSIFICATION_WEIGHTS[m.classification] ?? 0.7) * 100;
-    return acc + (capsAcc * 0.7 + weightAcc * 0.3);
-  }, 0);
-
-  return Math.round((total / playerMoves.length) * 10) / 10;
+  if (!moves.length) return 100;
+  const whiteChances = [cpToWinPct(moves[0].evalBefore), ...moves.map(m => cpToWinPct(m.evalAfter))];
+  const windowSize = Math.min(whiteChances.length, Math.max(2, Math.min(8, Math.floor(moves.length / 10))));
+  const samples = moves.flatMap((move, index) => {
+    if (move.turn !== color) return [];
+    const start = Math.max(0, index - windowSize + 2);
+    const window = whiteChances.slice(start, start + windowSize);
+    const mean = window.reduce((sum, value) => sum + value, 0) / window.length;
+    const deviation = Math.sqrt(window.reduce((sum, value) => sum + (value - mean) ** 2, 0) / window.length);
+    return [{ accuracy: calculateMoveAccuracy(move.winPctLoss), weight: Math.max(0.5, Math.min(12, deviation)) }];
+  });
+  if (!samples.length) return 100;
+  const weighted = samples.reduce((sum, s) => sum + s.accuracy * s.weight, 0) / samples.reduce((sum, s) => sum + s.weight, 0);
+  const harmonic = samples.some(s => s.accuracy === 0) ? 0 : samples.length / samples.reduce((sum, s) => sum + 1 / s.accuracy, 0);
+  return Math.round((weighted + harmonic) / 2 * 10) / 10;
 }
 
-/**
- * Estimates Elo performance from overall accuracy and tactical error distribution
+/** Published Chess.com loss bands, applied to our documented win-chance proxy.
+ * Exact boundaries belong to the more severe band; zero loss is Best.
  */
-export function estimateEloFromAccuracy(
-  accuracy: number,
-  moves?: MoveAnalysis[],
-  color?: 'w' | 'b'
-): number {
-  if (moves && color) {
-    const playerMoves = moves.filter((m) => m.turn === color);
-    if (playerMoves.length > 0) {
-      const blunders = playerMoves.filter((m) => m.classification === 'blunder').length;
-      const mistakes = playerMoves.filter((m) => m.classification === 'mistake').length;
-      const inaccuracies = playerMoves.filter((m) => m.classification === 'inaccuracy').length;
-      const missedWins = playerMoves.filter((m) => m.classification === 'missed_win').length;
-      const greatBrilliant = playerMoves.filter(
-        (m) => m.classification === 'great' || m.classification === 'brilliant'
-      ).length;
+export function classifyExpectedLoss(loss: number): MoveClassification {
+  if (loss <= 0) return 'best';
+  if (loss < 2) return 'excellent';
+  if (loss < 5) return 'good';
+  if (loss < 10) return 'inaccuracy';
+  if (loss < 20) return 'mistake';
+  return 'blunder';
+}
 
-      let baseRating: number;
-      if (accuracy <= 50) {
-        baseRating = 400 + (accuracy / 50) * 350;
-      } else if (accuracy <= 75) {
-        baseRating = 750 + ((accuracy - 50) / 25) * 550;
-      } else if (accuracy <= 88) {
-        baseRating = 1300 + ((accuracy - 75) / 13) * 600;
-      } else if (accuracy <= 95) {
-        baseRating = 1900 + ((accuracy - 88) / 7) * 450;
-      } else {
-        baseRating = 2350 + ((accuracy - 95) / 5) * 450;
-      }
-
-      const penalty = blunders * 220 + mistakes * 110 + missedWins * 130 + inaccuracies * 40;
-      const bonus = greatBrilliant * 70;
-      let finalRating = baseRating - penalty + bonus;
-
-      if (blunders >= 2) {
-        finalRating = Math.min(finalRating, 1200);
-      } else if (blunders >= 1) {
-        finalRating = Math.min(finalRating, 1600);
-      }
-
-      const rounded = Math.round(finalRating / 25) * 25;
-      return Math.min(2900, Math.max(400, rounded));
-    }
-  }
-
-  if (accuracy >= 98) return 2850;
-  if (accuracy <= 40) return 400;
-  const est = 350 + 26.5 * accuracy;
-  const rounded = Math.round(est / 50) * 50;
-  return Math.min(3000, Math.max(400, rounded));
+function playerChances(evaluation: { scoreCp?: number; mate?: number }, sign: number): number {
+  if (evaluation.mate !== undefined) return evaluation.mate * sign > 0 ? 100 : 0;
+  return cpToWinPct((evaluation.scoreCp ?? 0) * sign);
 }
 
 /* ============================================================================
@@ -228,49 +165,6 @@ export interface InfluencingPiece {
 }
 
 const PROMOTIONS: Array<'b' | 'n' | 'r' | 'q' | undefined> = [undefined, 'b', 'n', 'r', 'q'];
-
-const CENTIPAWN_CLASSIFICATIONS: MoveClassification[] = [
-  'best',
-  'excellent',
-  'good',
-  'inaccuracy',
-  'mistake',
-  'blunder',
-];
-
-/**
- * WintrCat/freechess quadratic evaluation loss threshold curve (in centipawns)
- * Scales permissible centipawn loss dynamically with the magnitude of previous evaluation.
- */
-export function getEvaluationLossThreshold(
-  classif: MoveClassification,
-  prevEval: number
-): number {
-  const absEval = Math.abs(prevEval);
-  let threshold = 0;
-
-  switch (classif) {
-    case 'best':
-      threshold = 0.0001 * Math.pow(absEval, 2) + 0.0236 * absEval - 3.7143;
-      break;
-    case 'excellent':
-      threshold = 0.0002 * Math.pow(absEval, 2) + 0.1231 * absEval + 27.5455;
-      break;
-    case 'good':
-      threshold = 0.0002 * Math.pow(absEval, 2) + 0.2643 * absEval + 60.5455;
-      break;
-    case 'inaccuracy':
-      threshold = 0.0002 * Math.pow(absEval, 2) + 0.3624 * absEval + 108.0909;
-      break;
-    case 'mistake':
-      threshold = 0.0003 * Math.pow(absEval, 2) + 0.4027 * absEval + 225.8182;
-      break;
-    default:
-      threshold = Infinity;
-  }
-
-  return Math.max(threshold, 0);
-}
 
 function oppColor(c: 'w' | 'b'): 'w' | 'b' {
   return c === 'w' ? 'b' : 'w';
@@ -705,11 +599,10 @@ export function isMaterialSacrifice(
 }
 
 /**
- * Classifies a single chess move using the integrated WintrCat/freechess & Brilliant-Chess engine
+ * Classifies a move using public loss bands and bounded sacrifice heuristics.
  */
 export function classifyMove({
   ply,
-  moveNumber,
   turn,
   san,
   uci,
@@ -720,7 +613,6 @@ export function classifyMove({
   evalBeforeObj,
   evalAfterObj,
   prevMoveAnalysis,
-  forceBook = false,
 }: {
   ply: number;
   moveNumber: number;
@@ -734,7 +626,6 @@ export function classifyMove({
   evalBeforeObj: EngineEvalResult;
   evalAfterObj: EngineEvalResult;
   prevMoveAnalysis?: MoveAnalysis;
-  forceBook?: boolean;
 }): {
   classification: MoveClassification;
   winPctBefore: number;
@@ -745,262 +636,58 @@ export function classifyMove({
   pieceSacrificed: boolean;
 } {
   const sign = turn === 'w' ? 1 : -1;
+  const beforeBoard = new Chess(fenBefore);
+  const afterBoard = new Chess(fenAfter);
+  const terminal = afterBoard.isGameOver();
+  const bestMove = evalBeforeObj.bestMove || evalBeforeObj.multiPVEvals?.find(line => line.pvIndex === 1)?.bestMove;
+  // UCI promotion suffix is part of the move, not optional identity information.
+  const isTopEngineChoice = bestMove === uci;
+  const matchingLine = evalBeforeObj.multiPVEvals?.find(line => line.bestMove === uci);
+  const winPctBefore = playerChances(evalBeforeObj, sign);
+  const rawAfter = terminal
+    ? (afterBoard.isCheckmate() ? 100 : 50)
+    : playerChances(evalAfterObj, sign);
+  // Same-root estimates reduce horizon noise, but must never override an actual
+  // terminal result or a change in forced-mate status discovered after the move.
+  const sameMateStatus = Math.sign(evalBeforeObj.mate ?? 0) === Math.sign(evalAfterObj.mate ?? 0);
+  const canCorrect = !terminal && sameMateStatus;
+  const winPctAfter = canCorrect && isTopEngineChoice
+    ? Math.max(winPctBefore, rawAfter)
+    : canCorrect && matchingLine?.scoreCp !== undefined
+      ? Math.max(rawAfter, playerChances(matchingLine, sign))
+      : rawAfter;
+  const isForcedMove = beforeBoard.moves().length === 1;
+  const winPctLoss = isForcedMove ? 0 : Math.max(0, winPctBefore - winPctAfter);
+  const isBookMove = ply <= 24 && Boolean(lookupOpening(fenAfter)) && winPctLoss < 2 && !(evalAfterObj.mate !== undefined && evalAfterObj.mate * sign < 0);
+  let classification = isForcedMove ? 'best' as MoveClassification : classifyExpectedLoss(winPctLoss);
+  if (isBookMove) classification = 'book';
 
-  // White-perspective evaluations
-  const evalBeforeWhite = evalBeforeObj.scoreCp ?? 0;
-  let evalAfterWhite = evalAfterObj.scoreCp ?? 0;
-
-  const mateBeforeWhite = evalBeforeObj.mate;
-  const mateAfterWhite = evalAfterObj.mate;
-
-  // Player-perspective evaluations (positive = good for moving player)
-  const playerEvalBefore = evalBeforeWhite * sign;
-  const rawPlayerEvalAfter = evalAfterWhite * sign;
-
-  const playerMateBefore = mateBeforeWhite !== undefined ? mateBeforeWhite * sign : undefined;
-  const playerMateAfter = mateAfterWhite !== undefined ? mateAfterWhite * sign : undefined;
-
-  const bestMove = evalBeforeObj.bestMove || evalBeforeObj.multiPVEvals?.[0]?.bestMove || '';
-  const isTopEngineChoice =
-    Boolean(bestMove) &&
-    (bestMove === uci || bestMove.slice(0, 4) === uci.slice(0, 4));
-
-  // Same-root MultiPV line matching (WintrCat/freechess analysis.ts lines 65-88)
-  // Eliminates Stockfish odd/even ply horizon noise when the played move is in top MultiPV lines
-  const matchingTopLine = evalBeforeObj.multiPVEvals?.find(
-    (line) => line.bestMove === uci || line.bestMove.slice(0, 4) === uci.slice(0, 4)
-  );
-
-  let lastLineEvalLoss = Infinity;
-  let matchedPlayerEvalAfter: number | undefined;
-  if (matchingTopLine && matchingTopLine.scoreCp !== undefined) {
-    matchedPlayerEvalAfter = matchingTopLine.scoreCp * sign;
-    lastLineEvalLoss = Math.max(0, playerEvalBefore - matchedPlayerEvalAfter);
-  }
-
-  const crossPlyEvalLoss = Math.max(0, playerEvalBefore - rawPlayerEvalAfter);
-  const evalLoss = isTopEngineChoice ? 0 : Math.min(crossPlyEvalLoss, lastLineEvalLoss);
-
-  // Use horizon-corrected evalAfter when MultiPV same-root evaluation shows smaller loss
-  const effectivePlayerEvalAfter = isTopEngineChoice
-    ? Math.max(playerEvalBefore, rawPlayerEvalAfter)
-    : matchedPlayerEvalAfter !== undefined && lastLineEvalLoss < crossPlyEvalLoss
-      ? matchedPlayerEvalAfter
-      : rawPlayerEvalAfter;
-
-  if (isTopEngineChoice && rawPlayerEvalAfter < playerEvalBefore) {
-    evalAfterWhite = evalBeforeWhite;
-  } else if (matchedPlayerEvalAfter !== undefined && lastLineEvalLoss < crossPlyEvalLoss) {
-    evalAfterWhite = matchingTopLine!.scoreCp!;
-  }
-
-  const winPctBefore = cpToWinPct(playerEvalBefore);
-  const winPctAfter = cpToWinPct(effectivePlayerEvalAfter);
-  const rawWinPctLoss = isTopEngineChoice ? 0 : Math.max(0, winPctBefore - winPctAfter);
-
-  // Forced move check: if only 1 legal move existed in fenBefore
-  let isForcedMove = false;
-  try {
-    const beforeBoard = new Chess(fenBefore);
-    if (beforeBoard.moves().length <= 1) {
-      isForcedMove = true;
-    }
-  } catch {
-    // Ignore
-  }
-
-  // Opening book check
-  const openingMatch = lookupOpening(fenAfter);
-  const isSafeForBook =
-    !(playerMateAfter !== undefined && playerMateAfter < 0) && evalLoss <= 120;
-  const isBookMove = Boolean((forceBook || (ply <= 24 && openingMatch)) && isSafeForBook);
-
-  // MultiPV 2nd best move evaluation (for Brilliant & Great move tests)
-  const secondTopLine = evalBeforeObj.multiPVEvals?.find((l) => l.pvIndex === 2);
-  const playerSecondEval =
-    secondTopLine?.scoreCp !== undefined ? secondTopLine.scoreCp * sign : undefined;
-  const secondMoveMate =
-    secondTopLine?.mate !== undefined ? secondTopLine.mate * sign : undefined;
-
-  const noMate = playerMateBefore === undefined && playerMateAfter === undefined;
-  const isSacrifice = isMaterialSacrifice(fenBefore, fenAfter, { from, to, san }, turn);
-
-  let classification: MoveClassification = 'good';
-
-  // 1. Opening Book Move
-  if (isBookMove) {
-    classification = 'book';
-  }
-  // 2. Forced Move (only 1 legal move) -> Best
-  else if (isForcedMove) {
-    classification = 'best';
-  }
-  // 3. Engine #1 Choice -> starts as Best, then checked for Brilliant / Great below
-  else if (isTopEngineChoice) {
-    classification = 'best';
-  }
-  // 4. Non-top move classification (WintrCat/freechess analysis.ts lines 102-163)
-  else {
-    // Case A: No mate before and no mate after -> WintrCat centipawn threshold curve
-    if (noMate) {
-      for (const classif of CENTIPAWN_CLASSIFICATIONS) {
-        if (evalLoss <= getEvaluationLossThreshold(classif, evalBeforeWhite)) {
-          classification = classif;
-          break;
-        }
-      }
-    }
-    // Case B: No mate before, but mate is on the board after the move (cp -> mate)
-    else if (playerMateBefore === undefined && playerMateAfter !== undefined) {
-      if (playerMateAfter > 0) {
-        classification = 'best';
-      } else if (playerMateAfter >= -2) {
-        classification = 'blunder';
-      } else if (playerMateAfter >= -5) {
-        classification = 'mistake';
-      } else {
-        classification = 'inaccuracy';
-      }
-    }
-    // Case C: Mate existed before, but no longer mate after the move (mate -> cp)
-    else if (playerMateBefore !== undefined && playerMateAfter === undefined) {
-      if (playerMateBefore < 0 && effectivePlayerEvalAfter < 0) {
-        classification = 'best';
-      } else if (effectivePlayerEvalAfter >= 400) {
-        classification = 'good';
-      } else if (effectivePlayerEvalAfter >= 150) {
-        classification = 'inaccuracy';
-      } else if (effectivePlayerEvalAfter >= -100) {
-        classification = 'missed_win';
-      } else {
-        classification = 'blunder';
-      }
-    }
-    // Case D: Mate existed before AND mate still exists after (mate -> mate)
-    else if (playerMateBefore !== undefined && playerMateAfter !== undefined) {
-      if (playerMateBefore > 0) {
-        if (playerMateAfter <= -4) {
-          classification = 'mistake';
-        } else if (playerMateAfter < 0) {
-          classification = 'blunder';
-        } else if (playerMateAfter <= playerMateBefore) {
-          classification = 'best';
-        } else if (playerMateAfter <= playerMateBefore + 2) {
-          classification = 'excellent';
-        } else {
-          classification = 'good';
-        }
-      } else {
-        if (playerMateAfter > 0 || playerMateAfter === playerMateBefore) {
-          classification = 'best';
-        } else {
-          classification = 'good';
-        }
-      }
-    }
-  }
-
-  // 5. Check for Brilliant & Great Moves when move is Best or Excellent (WintrCat lines 166-282)
-  if (
-    !isBookMove &&
-    !isForcedMove &&
-    (classification === 'best' || (classification === 'excellent' && evalLoss <= 20))
-  ) {
-    const winningAnyways =
-      (playerSecondEval !== undefined && playerSecondEval >= 700 && playerMateBefore === undefined) ||
-      (playerMateBefore !== undefined && playerMateBefore > 0 && secondMoveMate !== undefined && secondMoveMate > 0);
-
-    if (
-      isSacrifice &&
-      effectivePlayerEvalAfter >= -50 &&
-      !winningAnyways &&
-      !san.includes('=')
-    ) {
+  const secondLine = evalBeforeObj.multiPVEvals?.find(line => line.pvIndex === 2);
+  const secondChances = secondLine ? playerChances(secondLine, sign) : undefined;
+  const isSacrifice = !isBookMove && !isForcedMove && !terminal && winPctLoss < 2
+    && isMaterialSacrifice(fenBefore, fenAfter, { from, to, san }, turn);
+  if (!isBookMove && !isForcedMove && !terminal && secondChances !== undefined) {
+    if (isSacrifice && winPctAfter >= 50 && secondChances < 95 && !san.includes('=')) {
       classification = 'brilliant';
-    } else if (
-      classification === 'best' &&
-      noMate &&
-      playerSecondEval !== undefined &&
-      !isPieceHanging(fenBefore, fenAfter, to as Square)
-    ) {
-      const multiPvGap = playerEvalBefore - playerSecondEval;
-      const punishedOpponentError =
-        prevMoveAnalysis &&
-        (prevMoveAnalysis.classification === 'blunder' ||
-          prevMoveAnalysis.classification === 'mistake' ||
-          prevMoveAnalysis.classification === 'missed_win') &&
-        multiPvGap >= 150;
-
-      const onlyGoodMoveInCriticalPos =
-        multiPvGap >= 200 &&
-        effectivePlayerEvalAfter >= -100 &&
-        playerEvalBefore <= 500;
-
-      if (punishedOpponentError || onlyGoodMoveInCriticalPos) {
-        classification = 'great';
-      }
+    } else if (classification === 'best' && winPctAfter >= 50
+      && winPctBefore - secondChances >= 20 && secondChances < 70) {
+      classification = 'great';
     }
   }
 
-  // 6. Check for Missed Win (Brilliant-Chess lines 301-305)
-  if (
-    (classification === 'inaccuracy' ||
-      classification === 'mistake' ||
-      classification === 'blunder') &&
-    noMate
-  ) {
-    const opponentJustErred =
-      prevMoveAnalysis &&
-      (prevMoveAnalysis.classification === 'blunder' ||
-        prevMoveAnalysis.classification === 'mistake');
-
-    if (
-      opponentJustErred &&
-      playerEvalBefore >= 200 &&
-      effectivePlayerEvalAfter < 120 &&
-      evalLoss >= 130
-    ) {
-      classification = 'missed_win';
-    } else if (
-      playerEvalBefore >= 350 &&
-      effectivePlayerEvalAfter >= -80 &&
-      effectivePlayerEvalAfter <= 100 &&
-      evalLoss >= 220
-    ) {
-      classification = 'missed_win';
-    }
+  const opponentErred = prevMoveAnalysis && ['mistake', 'blunder', 'missed_win'].includes(prevMoveAnalysis.classification);
+  if (opponentErred && winPctBefore >= 70 && winPctAfter <= 55 && winPctLoss >= 10) {
+    classification = 'missed_win';
   }
-
-  // 7. Refined Position Clamping
-  // If player is still completely winning (>= +6.0) and didn't lose excessive evaluation, downgrade blunder
-  if (classification === 'blunder' && effectivePlayerEvalAfter >= 600 && noMate) {
-    if (evalLoss < 150) {
-      classification = 'good';
-    } else if (evalLoss < 300) {
-      classification = 'inaccuracy';
-    } else {
-      classification = 'mistake';
-    }
-  }
-
-  // If player was already in a lost position (<= -6.0), DO NOT turn blunders into 'good'!
-  // A move is only softened to 'inaccuracy' if the evaluation loss was minor
-  if (classification === 'blunder' && playerEvalBefore <= -600 && noMate && evalLoss < 80) {
-    classification = 'inaccuracy';
-  }
-
-  const winPctLoss =
-    classification === 'book' || classification === 'best' || classification === 'brilliant' || classification === 'great'
-      ? 0
-      : rawWinPctLoss;
 
   return {
     classification,
     winPctBefore,
     winPctAfter,
     winPctLoss,
-    evalBeforeWhite,
-    evalAfterWhite,
+    // Preserve actual engine scores for the graph, coaching and puzzle exports.
+    evalBeforeWhite: evalBeforeObj.scoreCp ?? 0,
+    evalAfterWhite: evalAfterObj.scoreCp ?? 0,
     pieceSacrificed: isSacrifice,
   };
 }

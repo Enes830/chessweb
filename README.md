@@ -1,6 +1,6 @@
 # RewindBoard ♞
 
-**RewindBoard** is a zero-ad, 100% client-side Chess Game Review web application powered by **Stockfish 19 WebAssembly**. It reproduces Chess.com's premium Game Review experience with move-by-move CAPS accuracy, Static Exchange Evaluation (SEE) brilliant move detection, 3,400+ ECO opening book matching, bilingual English/Arabic (`RTL`) support, AI/heuristic coaching explanations, and companion Telegram Bot puzzle training integration.
+**RewindBoard** is a zero-ad, 100% client-side Chess Game Review web application powered by **Stockfish 19 WebAssembly**. It provides Stockfish move review, independent classifications, Lichess-based accuracy, sacrifice detection, 7,982 exact opening positions, English/Arabic support, coaching, and Telegram puzzle exports. Its scoring is not Chess.com CAPS or a calibrated Elo estimate.
 
 ---
 
@@ -16,11 +16,11 @@
   - **Raw PGN Tab**: Instant paste-and-analyze support with full PGN header parsing.
   - **Featured Masterpieces**: Built-in presets (*Morphy's Opera Game*, *Kasparov's Immortal*, *Tactical Comeback*).
 - **Hybrid Move Classification Engine**:
-  - Combines **WintrCat/freechess** quadratic centipawn loss curves and hanging-piece analysis with **Brilliant-Chess** Static Exchange Evaluation (`SEE`).
+  - Uses documented expected-loss bands and legal hanging-piece analysis with Static Exchange Evaluation (`SEE`).
   - **Brilliant (`!!`)**: Genuine material sacrifice verified via legal SEE (`exchangeGain`, `couldBeSaved`, `hasLastingOffer`) or unpinned hanging-piece viability where the move is top-tier and maintains a winning/equal position.
   - **Great (`!`)**: Critical only-move that turns a losing position into equal/winning or holds a narrow tactical edge over MultiPV #2 ($\ge 150\text{cp}$ spread).
   - **Best (`★`) / Excellent (`✓`) / Good**: Dynamic centipawn-loss thresholds scaled to previous evaluation magnitude.
-  - **Book (`📖`)**: $O(1)$ FEN prefix & board-placement lookup across **3,400+ ECO openings** (`openingsData.json`) plus full intermediate ply indexing.
+  - **Book (`📖`)**: $O(1)$ exact legal-position lookup across **7,982 positions** from CC0 ECO opening lines, including intermediate plies.
   - **Inaccuracy (`?!`) / Mistake (`?`) / Blunder (`??`) / Missed Win (`❌`)**: Context-aware classification across centipawn and mate-transition states.
 - **Interactive Review Dashboard**:
   - **Vertical Evaluation Bar**: Smooth win-percentage and mate-depth visualization.
@@ -82,33 +82,14 @@ npm run start
 
 ---
 
-## 📐 Mathematical & Classification Model
+## Analysis methodology
 
-### 1. Centipawn to Win Probability
+See [docs/analysis-methodology.md](docs/analysis-methodology.md) for formulas,
+classification thresholds, engine behavior, sources and known limits.
 
-Evaluations are normalized from White's perspective and converted using the standard Lichess/CAPS sigmoid formula:
-
-$$\text{winPct}(\text{cp}) = 50 + 50 \times \left( \frac{2}{1 + e^{-0.00368208 \times \text{cp}}} - 1 \right)$$
-
-### 2. Move Accuracy & Player Rating
-
-Move accuracy combines CAPS exponential win-percentage loss with classification weights:
-
-$$\text{CAPS}_{\text{move}} = \max\left(0, \min\left(100, 103.1668 \times e^{-0.04354 \times \text{winPctLoss}} - 3.1669\right)\right)$$
-
-$$\text{Accuracy}_{\text{player}} = \frac{1}{N} \sum_{i=1}^{N} \left(0.7 \times \text{CAPS}_i + 0.3 \times \text{Weight}_i \times 100\right)$$
-
-$$\text{Est. Elo} = \text{ clamp}_{[400, 3000]}\left(\text{round}_{50}\left(350 + 26.5 \times \text{Accuracy}_{\text{player}}\right)\right)$$
-
-### 3. Dynamic Evaluation Loss Curves
-
-Permissible centipawn loss scales quadratically with the magnitude of the previous evaluation $|\text{eval}_{\text{prev}}|$:
-
-- **Best**: $0.0001 x^2 + 0.0236 x - 3.7143$
-- **Excellent**: $0.0002 x^2 + 0.1231 x + 27.5455$
-- **Good**: $0.0002 x^2 + 0.2643 x + 60.5455$
-- **Inaccuracy**: $0.0002 x^2 + 0.3624 x + 108.0909$
-- **Mistake**: $0.0003 x^2 + 0.4027 x + 225.8182$
+Run `npm test` for deterministic analysis regressions and `npx tsc --noEmit`
+for strict TypeScript validation. Refresh the CC0 opening database with
+`node scripts/update-openings.mjs` (requires network access).
 
 ---
 
@@ -130,18 +111,18 @@ Permissible centipawn loss scales quadratically with the magnitude of the previo
     │   ├── EvalGraph.tsx        # Recharts win-probability / centipawn area graph
     │   ├── GameImporter.tsx     # Omnibox importer (Chess.com user/URL, Lichess URL, PGN, Presets)
     │   ├── MoveList.tsx         # Two-column ply navigation table with symbols
-    │   ├── ReviewSummary.tsx    # Accuracy cards, Elo estimates & classification counts
+    │   ├── ReviewSummary.tsx    # Accuracy cards & classification counts
     │   └── TelegramBridgeModal.tsx # Puzzle preview, JSON copy, webhook & Telegram deep link
     ├── lib/
     │   ├── bridge/telegramExport.ts # Puzzle extraction, localStorage & Telegram encoding
     │   ├── engine/
-    │   │   ├── classifier.ts    # Hybrid SEE + WintrCat move classifier & accuracy math
+    │   │   ├── classifier.ts    # Expected-loss classifier, SEE & accuracy math
     │   │   └── workerClient.ts  # UCI Web Worker queue, MultiPV parser & perspective normalizer
     │   ├── i18n/                # Bilingual English/Arabic translations & LanguageContext
     │   ├── chesscom.ts          # Chess.com PubAPI fetcher, URL parsers & preset PGNs
     │   ├── coachExplainer.ts    # Deterministic bilingual tactical heuristics + API client
     │   ├── openings.ts          # O(1) FEN opening book builder & lookup
-    │   └── openingsData.json    # 3,402 ECO openings dataset
+    │   └── openingsData.json    # 7,982 exact legal opening positions
     └── types/chess.ts           # Core TypeScript interfaces
 ```
 

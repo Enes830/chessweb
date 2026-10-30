@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { Chess } from 'chess.js';
 import fs from 'fs';
-import { classifyMove, calculatePlayerAccuracy, estimateEloFromAccuracy } from '../src/lib/engine/classifier.ts';
+import { classifyMove, calculatePlayerAccuracy } from '../src/lib/engine/classifier.ts';
 import { lookupOpening } from '../src/lib/openings.ts';
 
 const pgn = fs.readFileSync('/tmp/last_game.pgn', 'utf-8');
@@ -167,6 +167,6 @@ evaluateAll().then((evalResults) => {
   const wAcc = calculatePlayerAccuracy(analyzedMoves, 'w');
   const bAcc = calculatePlayerAccuracy(analyzedMoves, 'b');
   console.log('=== ACCURACY SUMMARY ===');
-  console.log('White Accuracy:', wAcc + '%', 'Estimated Elo:', estimateEloFromAccuracy(wAcc, analyzedMoves, 'w'));
-  console.log('Black Accuracy:', bAcc + '%', 'Estimated Elo:', estimateEloFromAccuracy(bAcc, analyzedMoves, 'b'));
+  console.log('White Accuracy:', wAcc + '%', 'Estimated Elo:'(wAcc, analyzedMoves, 'w'));
+  console.log('Black Accuracy:', bAcc + '%', 'Estimated Elo:'(bAcc, analyzedMoves, 'b'));
 });

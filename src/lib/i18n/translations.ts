@@ -73,6 +73,8 @@ export interface TranslationDictionary {
   tabMoves: string;
   tabTelegram: string;
   accuracyTitle: string;
+  analysisMethodNote: string;
+  analysisFailed: string;
   perfRating: string;
   classificationBreakdown: string;
   openTelegramModal: string;
@@ -212,7 +214,9 @@ export const translations: Record<Locale, TranslationDictionary> = {
     tabSummary: 'Summary',
     tabMoves: 'Moves',
     tabTelegram: 'Telegram',
-    accuracyTitle: 'CAPS Accuracy',
+    accuracyTitle: 'Accuracy',
+    analysisMethodNote: 'Stockfish analysis with independent move labels and Lichess-based accuracy. A single game does not reliably estimate your rating.',
+    analysisFailed: 'Analysis could not finish. Please try again or check the PGN.',
     perfRating: 'Estimated Performance',
     classificationBreakdown: 'Move Classifications',
     openTelegramModal: 'Export Puzzles',
@@ -346,7 +350,9 @@ export const translations: Record<Locale, TranslationDictionary> = {
     tabSummary: 'ملخص الدقة',
     tabMoves: 'سجل النقلات',
     tabTelegram: 'تيليجرام',
-    accuracyTitle: 'دقة اللعب (CAPS)',
+    accuracyTitle: 'دقة اللعب',
+    analysisMethodNote: 'تحليل ستوكفيش بتصنيفات مستقلة ودقة مبنية على منهج ليتشيس. لا تكفي مباراة واحدة لتقدير تصنيفك بشكل موثوق.',
+    analysisFailed: 'تعذر إكمال التحليل. يرجى المحاولة مجدداً أو التحقق من نص المباراة.',
     perfRating: 'الأداء التقديري (Elo)',
     classificationBreakdown: 'تصنيف النقلات',
     openTelegramModal: 'تصدير الألغاز',

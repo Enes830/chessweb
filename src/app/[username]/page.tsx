@@ -22,8 +22,8 @@ import {
 import {
   classifyMove,
   calculatePlayerAccuracy,
-  estimateEloFromAccuracy,
 } from '@/lib/engine/classifier';
+import { buildGamePositions } from '@/lib/engine/gamePositions';
 import { getStockfishClient } from '@/lib/engine/workerClient';
 import { generateHeuristicExplanation } from '@/lib/coachExplainer';
 import {
@@ -120,6 +120,8 @@ export default function UserProfilePage({ params }: PageProps) {
   const [activeRightTab, setActiveRightTab] = useState<'review' | 'moves'>('review');
 
   const analysisAbortedRef = useRef(false);
+  const analysisRunRef = useRef(0);
+  const [analysisFailed, setAnalysisFailed] = useState(false);
 
   // Fetch Player Profile, Stats & Games on Mount or username change
   useEffect(() => {
@@ -192,6 +194,8 @@ export default function UserProfilePage({ params }: PageProps) {
     setAnalysisProgress(0);
     setCurrentPly(0);
     analysisAbortedRef.current = false;
+    const analysisRun = ++analysisRunRef.current;
+    setAnalysisFailed(false);
 
     // Set board orientation based on player
     if (meta.white.username.toLowerCase() === rawUsername.toLowerCase()) {
@@ -203,67 +207,29 @@ export default function UserProfilePage({ params }: PageProps) {
     }
 
     try {
-      const chess = new Chess();
-      chess.loadPgn(pgn);
-
-      const history = chess.history({ verbose: true });
-      const totalPlies = history.length;
-      setTotalPliesToAnalyze(totalPlies);
-
-      if (totalPlies === 0) {
-        throw new Error('No moves found in PGN.');
-      }
-
-      const replayChess = new Chess();
-      const fenList: string[] = [replayChess.fen()];
-      const moveSteps: Array<{
-        ply: number;
-        moveNumber: number;
-        turn: 'w' | 'b';
-        san: string;
-        uci: string;
-        from: string;
-        to: string;
-        fenBefore: string;
-        fenAfter: string;
-      }> = [];
-
-      for (let i = 0; i < history.length; i++) {
-        const h = history[i];
-        const fenBefore = replayChess.fen();
-        replayChess.move(h);
-        const fenAfter = replayChess.fen();
-        fenList.push(fenAfter);
-
-        moveSteps.push({
-          ply: i + 1,
-          moveNumber: Math.floor(i / 2) + 1,
-          turn: h.color,
-          san: h.san,
-          uci: `${h.from}${h.to}${h.promotion || ''}`,
-          from: h.from,
-          to: h.to,
-          fenBefore,
-          fenAfter,
-        });
-      }
+      const { moveSteps, fenList } = buildGamePositions(pgn);
+      setTotalPliesToAnalyze(moveSteps.length);
+      meta = { ...meta, initialFen: fenList[0] };
+      setGameMetadata(meta);
 
       const client = getStockfishClient();
+      client.stopAndClearQueue();
       await client.waitReady();
+      if (analysisRun !== analysisRunRef.current) return;
 
       const evalResults = await client.evaluateGamePositions(
         fenList,
         16,
         3,
         (pct, cur) => {
-          if (!analysisAbortedRef.current) {
+          if (!analysisAbortedRef.current && analysisRun === analysisRunRef.current) {
             setAnalysisProgress(pct);
             setCurrentPlyAnalyzing(cur);
           }
         }
       );
 
-      if (analysisAbortedRef.current) return;
+      if (analysisAbortedRef.current || analysisRun !== analysisRunRef.current) return;
 
       const analyzedMoves: MoveAnalysis[] = [];
       const classificationsCount = {
@@ -293,34 +259,12 @@ export default function UserProfilePage({ params }: PageProps) {
         },
       };
 
-      let inBookSequence = true;
       let deepestOpeningName: string | undefined;
-      const stepOpenings: Array<string | undefined> = new Array(moveSteps.length);
-      const isBookMoveStep: boolean[] = new Array(moveSteps.length).fill(false);
-
-      for (let i = 0; i < moveSteps.length; i++) {
-        const match = lookupOpening(moveSteps[i].fenAfter);
-        if (match) {
-          stepOpenings[i] = match.name;
-          deepestOpeningName = match.name;
-          if (inBookSequence && moveSteps[i].ply <= 20) {
-            isBookMoveStep[i] = true;
-          }
-        } else {
-          inBookSequence = false;
-        }
-      }
-
-      if (deepestOpeningName) {
-        let currentName: string = stepOpenings[0] || deepestOpeningName!;
-        for (let i = 0; i < moveSteps.length; i++) {
-          if (stepOpenings[i]) {
-            currentName = stepOpenings[i]!;
-          } else if (i <= 16) {
-            stepOpenings[i] = currentName;
-          }
-        }
-      }
+      const stepOpenings = moveSteps.map((step) => {
+        const match = step.ply <= 24 ? lookupOpening(step.fenAfter) : null;
+        if (match) deepestOpeningName = match.name;
+        return match?.name;
+      });
 
       if (!meta.opening && deepestOpeningName) {
         meta.opening = deepestOpeningName;
@@ -345,7 +289,6 @@ export default function UserProfilePage({ params }: PageProps) {
           evalBeforeObj,
           evalAfterObj,
           prevMoveAnalysis,
-          forceBook: isBookMoveStep[i],
         });
 
         let bestUci =
@@ -409,8 +352,6 @@ export default function UserProfilePage({ params }: PageProps) {
 
       const whiteAccuracy = calculatePlayerAccuracy(analyzedMoves, 'w');
       const blackAccuracy = calculatePlayerAccuracy(analyzedMoves, 'b');
-      const whiteEstimatedElo = estimateEloFromAccuracy(whiteAccuracy, analyzedMoves, 'w');
-      const blackEstimatedElo = estimateEloFromAccuracy(blackAccuracy, analyzedMoves, 'b');
 
       const puzzles = extractPuzzlesFromAnalysis(analyzedMoves, meta);
       savePuzzlesToLocalStorage(puzzles);
@@ -420,8 +361,6 @@ export default function UserProfilePage({ params }: PageProps) {
         moves: analyzedMoves,
         whiteAccuracy,
         blackAccuracy,
-        whiteEstimatedElo,
-        blackEstimatedElo,
         classificationsCount,
         puzzles,
       };
@@ -430,8 +369,9 @@ export default function UserProfilePage({ params }: PageProps) {
       setPageState('reviewed');
       setCurrentPly(1);
     } catch (err: any) {
+      if (analysisAbortedRef.current || analysisRun !== analysisRunRef.current) return;
       console.error('Analysis failed:', err);
-      alert(err.message || 'Game analysis failed.');
+      setAnalysisFailed(true);
       setPageState('profile');
     }
   };
@@ -539,6 +479,7 @@ export default function UserProfilePage({ params }: PageProps) {
 
       {/* Main Page Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-start">
+        {analysisFailed && <p role="alert" className="mb-4 rounded-lg border border-red-400/40 p-3 text-sm text-red-200">{t('analysisFailed')}</p>}
         {/* Loading Player Profile */}
         {isLoadingProfile && (
           <div className="py-24 flex flex-col items-center justify-center space-y-4 max-w-md mx-auto text-center">
@@ -826,6 +767,8 @@ export default function UserProfilePage({ params }: PageProps) {
             <button
               onClick={() => {
                 analysisAbortedRef.current = true;
+                analysisRunRef.current++;
+                getStockfishClient().stopAndClearQueue();
                 setPageState('profile');
               }}
               className="text-xs text-slate-500 hover:text-slate-300 transition-colors pt-2"

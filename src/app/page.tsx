@@ -10,8 +10,8 @@ import {
 import {
   classifyMove,
   calculatePlayerAccuracy,
-  estimateEloFromAccuracy,
 } from '@/lib/engine/classifier';
+import { buildGamePositions } from '@/lib/engine/gamePositions';
 import { getStockfishClient } from '@/lib/engine/workerClient';
 import { generateHeuristicExplanation } from '@/lib/coachExplainer';
 import {
@@ -59,6 +59,8 @@ export default function HomePage() {
   const [activeRightTab, setActiveRightTab] = useState<'review' | 'moves'>('review');
 
   const analysisAbortedRef = useRef(false);
+  const analysisRunRef = useRef(0);
+  const [analysisFailed, setAnalysisFailed] = useState(false);
 
   // Starts analysis of a loaded PGN
   const handleStartAnalysis = async (pgn: string, meta: GameMetadata) => {
@@ -68,6 +70,8 @@ export default function HomePage() {
     setAnalysisProgress(0);
     setCurrentPly(0);
     analysisAbortedRef.current = false;
+    const analysisRun = ++analysisRunRef.current;
+    setAnalysisFailed(false);
 
     // Set board orientation based on user or white
     if (meta.white.result === 'win' || meta.white.username.toLowerCase() === 'hikaru') {
@@ -75,68 +79,29 @@ export default function HomePage() {
     }
 
     try {
-      const chess = new Chess();
-      chess.loadPgn(pgn);
+      const { moveSteps, fenList } = buildGamePositions(pgn);
+      setTotalPliesToAnalyze(moveSteps.length);
+      meta = { ...meta, initialFen: fenList[0] };
+      setGameMetadata(meta);
 
-      const history = chess.history({ verbose: true });
-      const totalPlies = history.length;
-      setTotalPliesToAnalyze(totalPlies);
-
-      if (totalPlies === 0) {
-        throw new Error('No moves found in PGN.');
-      }
-
-      const replayChess = new Chess();
-      const fenList: string[] = [replayChess.fen()];
-      const moveSteps: Array<{
-        ply: number;
-        moveNumber: number;
-        turn: 'w' | 'b';
-        san: string;
-        uci: string;
-        from: string;
-        to: string;
-        fenBefore: string;
-        fenAfter: string;
-      }> = [];
-
-      for (let i = 0; i < history.length; i++) {
-        const h = history[i];
-        const fenBefore = replayChess.fen();
-        replayChess.move(h);
-        const fenAfter = replayChess.fen();
-        fenList.push(fenAfter);
-
-        moveSteps.push({
-          ply: i + 1,
-          moveNumber: Math.floor(i / 2) + 1,
-          turn: h.color,
-          san: h.san,
-          uci: `${h.from}${h.to}${h.promotion || ''}`,
-          from: h.from,
-          to: h.to,
-          fenBefore,
-          fenAfter,
-        });
-      }
-
-      // Run client-side Stockfish evaluation queue
       const client = getStockfishClient();
+      client.stopAndClearQueue();
       await client.waitReady();
+      if (analysisRun !== analysisRunRef.current) return;
 
       const evalResults = await client.evaluateGamePositions(
         fenList,
         16, // depth
-        3,  // multiPV (top 3 candidate lines for accurate WintrCat/Brilliant-Chess classification)
+        3,  // MultiPV: compare the top three candidate moves
         (pct, cur) => {
-          if (!analysisAbortedRef.current) {
+          if (!analysisAbortedRef.current && analysisRun === analysisRunRef.current) {
             setAnalysisProgress(pct);
             setCurrentPlyAnalyzing(cur);
           }
         }
       );
 
-      if (analysisAbortedRef.current) return;
+      if (analysisAbortedRef.current || analysisRun !== analysisRunRef.current) return;
 
       // Classify all moves
       const analyzedMoves: MoveAnalysis[] = [];
@@ -167,36 +132,13 @@ export default function HomePage() {
         },
       };
 
-      // Find the deepest opening book match within the opening phase (ply <= 16)
-      // All moves leading up to a recognized book position are theoretical book moves
-      let inBookSequence = true;
+      // Only exact, legal opening positions qualify; never backfill unknown moves.
       let deepestOpeningName: string | undefined;
-      const stepOpenings: Array<string | undefined> = new Array(moveSteps.length);
-      const isBookMoveStep: boolean[] = new Array(moveSteps.length).fill(false);
-
-      for (let i = 0; i < moveSteps.length; i++) {
-        const match = lookupOpening(moveSteps[i].fenAfter);
-        if (match) {
-          stepOpenings[i] = match.name;
-          deepestOpeningName = match.name;
-          if (inBookSequence && moveSteps[i].ply <= 20) {
-            isBookMoveStep[i] = true;
-          }
-        } else {
-          inBookSequence = false;
-        }
-      }
-
-      if (deepestOpeningName) {
-        let currentName: string = stepOpenings[0] || deepestOpeningName!;
-        for (let i = 0; i < moveSteps.length; i++) {
-          if (stepOpenings[i]) {
-            currentName = stepOpenings[i]!;
-          } else if (i <= 16) {
-            stepOpenings[i] = currentName;
-          }
-        }
-      }
+      const stepOpenings = moveSteps.map((step) => {
+        const match = step.ply <= 24 ? lookupOpening(step.fenAfter) : null;
+        if (match) deepestOpeningName = match.name;
+        return match?.name;
+      });
 
       if (!meta.opening && deepestOpeningName) {
         meta.opening = deepestOpeningName;
@@ -221,7 +163,6 @@ export default function HomePage() {
           evalBeforeObj,
           evalAfterObj,
           prevMoveAnalysis,
-          forceBook: isBookMoveStep[i],
         });
 
         let bestUci =
@@ -285,8 +226,6 @@ export default function HomePage() {
 
       const whiteAccuracy = calculatePlayerAccuracy(analyzedMoves, 'w');
       const blackAccuracy = calculatePlayerAccuracy(analyzedMoves, 'b');
-      const whiteEstimatedElo = estimateEloFromAccuracy(whiteAccuracy, analyzedMoves, 'w');
-      const blackEstimatedElo = estimateEloFromAccuracy(blackAccuracy, analyzedMoves, 'b');
 
       const puzzles = extractPuzzlesFromAnalysis(analyzedMoves, meta);
       savePuzzlesToLocalStorage(puzzles);
@@ -296,8 +235,6 @@ export default function HomePage() {
         moves: analyzedMoves,
         whiteAccuracy,
         blackAccuracy,
-        whiteEstimatedElo,
-        blackEstimatedElo,
         classificationsCount,
         puzzles,
       };
@@ -306,8 +243,9 @@ export default function HomePage() {
       setGameState('reviewed');
       setCurrentPly(1);
     } catch (err: any) {
+      if (analysisAbortedRef.current || analysisRun !== analysisRunRef.current) return;
       console.error('Analysis failed:', err);
-      alert(err.message || 'Game analysis failed.');
+      setAnalysisFailed(true);
       setGameState('import');
     }
   };
@@ -327,6 +265,8 @@ export default function HomePage() {
         <button
           onClick={() => {
             analysisAbortedRef.current = true;
+            analysisRunRef.current++;
+            getStockfishClient().stopAndClearQueue();
             setGameState('import');
           }}
           className="flex items-center gap-3 group text-left transition-opacity hover:opacity-85 cursor-pointer focus:outline-none"
@@ -370,6 +310,8 @@ export default function HomePage() {
             <button
               onClick={() => {
                 analysisAbortedRef.current = true;
+                analysisRunRef.current++;
+                getStockfishClient().stopAndClearQueue();
                 setGameState('import');
               }}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/[0.08] transition-colors"
@@ -393,6 +335,7 @@ export default function HomePage() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-start">
+        {analysisFailed && <p role="alert" className="mb-4 rounded-lg border border-red-400/40 p-3 text-sm text-red-200">{t('analysisFailed')}</p>}
         {/* 1. Import Mode */}
         {gameState === 'import' && (
           <div className="py-8 sm:py-14 space-y-6">
@@ -441,6 +384,8 @@ export default function HomePage() {
             <button
               onClick={() => {
                 analysisAbortedRef.current = true;
+                analysisRunRef.current++;
+                getStockfishClient().stopAndClearQueue();
                 setGameState('import');
               }}
               className="text-xs text-slate-500 hover:text-slate-300 transition-colors pt-2"

@@ -76,8 +76,6 @@ export interface GameReviewReport {
   moves: MoveAnalysis[];
   whiteAccuracy: number;
   blackAccuracy: number;
-  whiteEstimatedElo: number;
-  blackEstimatedElo: number;
   classificationsCount: {
     white: Record<MoveClassification, number>;
     black: Record<MoveClassification, number>;
@@ -133,6 +131,7 @@ export interface EngineEvalResult {
   pv: string[];
   multiPVEvals?: {
     pvIndex: number;
+    depth?: number;
     scoreCp?: number;
     mate?: number;
     bestMove: string;

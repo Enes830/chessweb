@@ -1,5 +1,7 @@
 'use client';
 
+import { MoveClassificationIcon } from '@/components/MoveClassificationIcon';
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Chess, Square } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
@@ -554,7 +556,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
     const bestUci = currentMove.bestMoveUci || currentMove.uci;
     const isBestPlayed =
-      bestUci.length >= 4 && bestUci.slice(0, 4) === currentMove.uci.slice(0, 4);
+      bestUci.length >= 4 && bestUci === currentMove.uci;
 
     // 1. Played move arrow (if different from engine best move, use classification color)
     if (currentMove.from && currentMove.to && !isBestPlayed) {
@@ -626,16 +628,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
           {/* 6. Game review classification badge (only on actual game moves) */}
           {isTargetSquare && currentMove && (
             <div className="absolute top-1 right-1 z-30 pointer-events-none">
-              <span
-                className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-mono font-bold shadow-md"
-                style={{
-                  backgroundColor: CLASSIFICATION_META[currentMove.classification].color,
-                  color: '#ffffff',
-                }}
-                title={CLASSIFICATION_META[currentMove.classification].name}
-              >
-                {CLASSIFICATION_META[currentMove.classification].symbol}
-              </span>
+              <MoveClassificationIcon classification={currentMove.classification} size={26} className="rounded-full shadow-md ring-1 ring-black/10" />
             </div>
           )}
         </div>
@@ -732,7 +725,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                   : nextMove?.bestMoveSan || nextMove?.bestMoveUci || 'e4'}
               </span>
               {currentMove && (
-                currentMove.bestMoveUci.slice(0, 4) === currentMove.uci.slice(0, 4) ? (
+                currentMove.bestMoveUci === currentMove.uci ? (
                   <span className="text-[10px] text-emerald-300 font-sans bg-emerald-500/20 px-1.5 py-0.5 rounded font-semibold border border-emerald-500/30">
                     ✓ {locale === 'ar' ? 'أفضل نقلة ملعوبة' : 'Played'}
                   </span>
