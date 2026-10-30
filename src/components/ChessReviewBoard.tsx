@@ -1,14 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Chess } from 'chess.js';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Chess, Square } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
-import type { PieceDropHandlerArgs, SquareHandlerArgs } from 'react-chessboard';
-import { MoveAnalysis, VariationMove, EngineEvalResult } from '@/types/chess';
+import { MoveAnalysis } from '@/types/chess';
 import { CLASSIFICATION_META } from '@/lib/engine/classifier';
-import { getStockfishClient } from '@/lib/engine/workerClient';
 import { EvalBar } from '@/components/EvalBar';
 import { useTranslation } from '@/lib/i18n/LanguageContext';
+import { getStockfishClient } from '@/lib/engine/workerClient';
 import {
   RotateCcw,
   SkipBack,
@@ -18,14 +17,30 @@ import {
   ChevronRight,
   SkipForward,
   GitBranch,
-  X,
-  PlayCircle,
+  Undo2,
+  ArrowLeft,
+  Loader2,
 } from 'lucide-react';
 
 interface Arrow {
   startSquare: string;
   endSquare: string;
   color: string;
+}
+
+interface VariationMove {
+  san: string;
+  uci: string;
+  from: string;
+  to: string;
+  fenBefore: string;
+  fenAfter: string;
+  turn: 'w' | 'b';
+}
+
+interface LegalMoveTarget {
+  to: string;
+  isCapture: boolean;
 }
 
 interface ChessReviewBoardProps {
@@ -48,325 +63,484 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
   const { t, locale } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Variation state
-  const [isVariationActive, setIsVariationActive] = useState(false);
-  const [variationRootPly, setVariationRootPly] = useState(0);
+  // Custom Variation state
   const [variationMoves, setVariationMoves] = useState<VariationMove[]>([]);
-  const [variationIndex, setVariationIndex] = useState(0); // 0 = at root FEN, 1 = after 1st move...
-  const [liveEval, setLiveEval] = useState<EngineEvalResult | null>(null);
-  const [isEvaluatingLive, setIsEvaluatingLive] = useState(false);
-
-  // Click-to-move square selection
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
-  const [legalTargetSquares, setLegalTargetSquares] = useState<string[]>([]);
+  const [legalMoves, setLegalMoves] = useState<LegalMoveTarget[]>([]);
+  const [variationEval, setVariationEval] = useState<{
+    scoreCp: number;
+    mate?: number;
+    bestMoveUci?: string;
+    bestMoveSan?: string;
+    isEvaluating?: boolean;
+  } | null>(null);
 
   const totalPlies = moves.length;
   const currentMove = currentPly > 0 ? moves[currentPly - 1] : null;
   const nextMove = currentPly < totalPlies ? moves[currentPly] : null;
 
-  // Determine current game FEN
-  const gameFen = useMemo(() => {
+  // Base game FEN for current ply
+  const baseFen = useMemo(() => {
     if (!currentMove) {
-      return moves.length > 0 ? moves[0].fenBefore : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      return moves.length > 0
+        ? moves[0].fenBefore
+        : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     }
     return currentMove.fenAfter;
   }, [currentMove, moves]);
 
-  // When parent changes currentPly, reset any active variation
+  // Current active FEN: either from custom variation branch or game review
+  const isCustomVariation = variationMoves.length > 0;
+  const displayFen = useMemo(() => {
+    if (isCustomVariation) {
+      return variationMoves[variationMoves.length - 1].fenAfter;
+    }
+    return baseFen;
+  }, [isCustomVariation, variationMoves, baseFen]);
+
+  // Chess.js instance for current position
+  const currentChess = useMemo(() => {
+    try {
+      return new Chess(displayFen);
+    } catch {
+      return new Chess();
+    }
+  }, [displayFen]);
+
+  // Reset custom variation whenever currentPly is changed from the outside (move list / controls)
+  const prevPlyRef = useRef(currentPly);
   useEffect(() => {
-    setIsVariationActive(false);
-    setVariationMoves([]);
-    setVariationIndex(0);
-    setLiveEval(null);
-    setSelectedSquare(null);
-    setLegalTargetSquares([]);
+    if (prevPlyRef.current !== currentPly) {
+      prevPlyRef.current = currentPly;
+      setVariationMoves([]);
+      setSelectedSquare(null);
+      setLegalMoves([]);
+      setVariationEval(null);
+    }
   }, [currentPly]);
 
-  // Active FEN displayed on the board
-  const displayedFen = useMemo(() => {
-    if (!isVariationActive) return gameFen;
-    if (variationIndex === 0) {
-      const baseMove = variationRootPly > 0 ? moves[variationRootPly - 1] : null;
-      return baseMove ? baseMove.fenAfter : (moves.length > 0 ? moves[0].fenBefore : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-    }
-    return variationMoves[variationIndex - 1]?.fenAfter || gameFen;
-  }, [isVariationActive, variationIndex, variationMoves, variationRootPly, gameFen, moves]);
-
-  // Centipawns & mate evaluations for EvalBar
-  const currentEvalCp = useMemo(() => {
-    if (isVariationActive) {
-      return liveEval?.scoreCp ?? 0;
-    }
-    return currentMove ? currentMove.evalAfter : (moves.length > 0 ? moves[0].evalBefore : 0);
-  }, [isVariationActive, liveEval, currentMove, moves]);
-
-  const currentMate = useMemo(() => {
-    if (isVariationActive) {
-      return liveEval?.mate;
-    }
-    return currentMove
-      ? (currentMove.isMateAfter ? currentMove.mateAfter : undefined)
-      : (moves.length > 0 && moves[0].isMateBefore ? moves[0].mateBefore : undefined);
-  }, [isVariationActive, liveEval, currentMove, moves]);
-
-  // Live Stockfish Evaluation during Variation Mode
+  // Real-time Stockfish evaluation for custom variation moves
   useEffect(() => {
-    if (!isVariationActive || !displayedFen) return;
+    if (!isCustomVariation) {
+      setVariationEval(null);
+      return;
+    }
 
-    let isSubscribed = true;
-    setIsEvaluatingLive(true);
+    let isCurrent = true;
+    const currentVarFen = variationMoves[variationMoves.length - 1].fenAfter;
 
-    const client = getStockfishClient();
-    client
-      .evaluateLivePosition(displayedFen, 14, 3, (partial) => {
-        if (isSubscribed) {
-          setLiveEval(partial);
-        }
-      })
-      .then((final) => {
-        if (isSubscribed) {
-          setLiveEval(final);
-          setIsEvaluatingLive(false);
-        }
-      })
-      .catch(() => {
-        if (isSubscribed) {
-          setIsEvaluatingLive(false);
-        }
-      });
+    setVariationEval((prev) => ({
+      scoreCp: prev?.scoreCp ?? 0,
+      mate: prev?.mate,
+      bestMoveUci: '',
+      bestMoveSan: '',
+      isEvaluating: true,
+    }));
+
+    try {
+      const client = getStockfishClient();
+      client
+        .evaluatePosition(currentVarFen, 12, 1)
+        .then((result) => {
+          if (!isCurrent) return;
+
+          let bestSan = '';
+          try {
+            const probe = new Chess(currentVarFen);
+            if (result.bestMove && result.bestMove.length >= 4) {
+              const m = probe.move({
+                from: result.bestMove.slice(0, 2),
+                to: result.bestMove.slice(2, 4),
+                promotion: result.bestMove[4] || undefined,
+              });
+              if (m) bestSan = m.san;
+            }
+          } catch {
+            // ignore
+          }
+
+          setVariationEval({
+            scoreCp: result.scoreCp ?? 0,
+            mate: result.mate,
+            bestMoveUci: result.bestMove,
+            bestMoveSan: bestSan || result.bestMove,
+            isEvaluating: false,
+          });
+        })
+        .catch(() => {
+          if (isCurrent) {
+            setVariationEval((prev) => (prev ? { ...prev, isEvaluating: false } : null));
+          }
+        });
+    } catch {
+      if (isCurrent) {
+        setVariationEval((prev) => (prev ? { ...prev, isEvaluating: false } : null));
+      }
+    }
 
     return () => {
-      isSubscribed = false;
+      isCurrent = false;
     };
-  }, [isVariationActive, displayedFen]);
+  }, [isCustomVariation, variationMoves]);
 
-  // Auto-play interval for main game review
+  // Current evaluation for EvalBar
+  const currentEvalCp = useMemo(() => {
+    if (isCustomVariation && variationEval) {
+      return variationEval.scoreCp;
+    }
+    return currentMove ? currentMove.evalAfter : moves.length > 0 ? moves[0].evalBefore : 0;
+  }, [isCustomVariation, variationEval, currentMove, moves]);
+
+  const currentMate = useMemo(() => {
+    if (isCustomVariation && variationEval) {
+      return variationEval.mate;
+    }
+    return currentMove
+      ? currentMove.isMateAfter
+        ? currentMove.mateAfter
+        : undefined
+      : moves.length > 0 && moves[0].isMateBefore
+      ? moves[0].mateBefore
+      : undefined;
+  }, [isCustomVariation, variationEval, currentMove, moves]);
+
+  // Auto-play interval (only active when not in variation)
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (isPlaying && !isVariationActive) {
+    if (isPlaying && !isCustomVariation) {
       timer = setInterval(() => {
         onSelectPly(currentPly < totalPlies ? currentPly + 1 : 0);
       }, 1200);
     }
     return () => clearInterval(timer);
-  }, [isPlaying, isVariationActive, currentPly, totalPlies, onSelectPly]);
-
-  // Convert engine best UCI move into SAN
-  const variationBestSan = useMemo(() => {
-    if (!isVariationActive || !liveEval?.bestMove || liveEval.bestMove.length < 4 || !displayedFen) {
-      return '';
-    }
-    try {
-      const probe = new Chess(displayedFen);
-      const m = probe.move({
-        from: liveEval.bestMove.slice(0, 2),
-        to: liveEval.bestMove.slice(2, 4),
-        promotion: liveEval.bestMove[4] || 'q',
-      });
-      return m ? m.san : liveEval.bestMove;
-    } catch {
-      return liveEval.bestMove;
-    }
-  }, [isVariationActive, liveEval?.bestMove, displayedFen]);
-
-  // Execute a piece move (from drag or click)
-  const handleMakeMove = useCallback(
-    (from: string, to: string, promotion: string = 'q'): boolean => {
-      const currentBoardFen = displayedFen;
-      let chessInstance: Chess;
-      try {
-        chessInstance = new Chess(currentBoardFen);
-      } catch {
-        return false;
-      }
-
-      let moveResult;
-      try {
-        moveResult = chessInstance.move({ from, to, promotion });
-      } catch {
-        return false;
-      }
-      if (!moveResult) return false;
-
-      // 1. If not currently in variation, check if this matches the actual game move
-      if (!isVariationActive && currentPly < totalPlies) {
-        const nextGameMove = moves[currentPly];
-        const playedUci = `${moveResult.from}${moveResult.to}${moveResult.promotion || ''}`;
-        if (playedUci.slice(0, 4) === nextGameMove.uci.slice(0, 4)) {
-          onSelectPly(currentPly + 1);
-          setSelectedSquare(null);
-          setLegalTargetSquares([]);
-          return true;
-        }
-      }
-
-      // 2. Otherwise: Enter or advance the Custom Variation
-      const newVarMove: VariationMove = {
-        san: moveResult.san,
-        uci: `${moveResult.from}${moveResult.to}${moveResult.promotion || ''}`,
-        from: moveResult.from,
-        to: moveResult.to,
-        fenBefore: currentBoardFen,
-        fenAfter: chessInstance.fen(),
-      };
-
-      if (!isVariationActive) {
-        setIsVariationActive(true);
-        setVariationRootPly(currentPly);
-        setVariationMoves([newVarMove]);
-        setVariationIndex(1);
-      } else {
-        const branch = variationMoves.slice(0, variationIndex);
-        branch.push(newVarMove);
-        setVariationMoves(branch);
-        setVariationIndex(branch.length);
-      }
-
-      setSelectedSquare(null);
-      setLegalTargetSquares([]);
-      return true;
-    },
-    [displayedFen, isVariationActive, currentPly, totalPlies, moves, onSelectPly, variationIndex, variationMoves]
-  );
-
-  // react-chessboard drag & drop callback
-  const handlePieceDrop = useCallback(
-    ({ sourceSquare, targetSquare }: PieceDropHandlerArgs): boolean => {
-      if (!targetSquare || sourceSquare === targetSquare) return false;
-      return handleMakeMove(sourceSquare, targetSquare, 'q');
-    },
-    [handleMakeMove]
-  );
-
-  // Square click for click-to-move
-  const handleSquareClick = useCallback(
-    ({ square }: SquareHandlerArgs) => {
-      let chessInstance: Chess;
-      try {
-        chessInstance = new Chess(displayedFen);
-      } catch {
-        return;
-      }
-
-      // If a square is already selected, try to move to the clicked square
-      if (selectedSquare) {
-        if (selectedSquare === square) {
-          setSelectedSquare(null);
-          setLegalTargetSquares([]);
-          return;
-        }
-
-        const moved = handleMakeMove(selectedSquare, square, 'q');
-        if (moved) return;
-      }
-
-      // If clicking own side's piece, select it and show legal destination dots
-      const piece = chessInstance.get(square as any);
-      if (piece && piece.color === chessInstance.turn()) {
-        setSelectedSquare(square);
-        const legalMoves = chessInstance.moves({ square: square as any, verbose: true });
-        setLegalTargetSquares(legalMoves.map((m) => m.to));
-      } else {
-        setSelectedSquare(null);
-        setLegalTargetSquares([]);
-      }
-    },
-    [displayedFen, selectedSquare, handleMakeMove]
-  );
-
-  // Play engine candidate move into the variation
-  const handlePlayEngineMove = useCallback(
-    (uciMove: string) => {
-      if (!uciMove || uciMove.length < 4) return;
-      const from = uciMove.slice(0, 2);
-      const to = uciMove.slice(2, 4);
-      const promotion = uciMove[4] || 'q';
-      handleMakeMove(from, to, promotion);
-    },
-    [handleMakeMove]
-  );
-
-  // Exit variation mode and return cleanly to main game review
-  const handleExitVariation = useCallback(() => {
-    setIsVariationActive(false);
-    setVariationMoves([]);
-    setVariationIndex(0);
-    setLiveEval(null);
-    setSelectedSquare(null);
-    setLegalTargetSquares([]);
-  }, []);
+  }, [isPlaying, isCustomVariation, currentPly, totalPlies, onSelectPly]);
 
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.closest('input, textarea, select, button, a, [contenteditable="true"]')) {
+      if (
+        (e.target as HTMLElement)?.closest(
+          'input, textarea, select, button, a, [contenteditable="true"]'
+        )
+      ) {
         return;
       }
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         setIsPlaying(false);
-        if (isVariationActive) {
-          if (variationIndex > 0) {
-            setVariationIndex((prev) => prev - 1);
-          } else {
-            handleExitVariation();
-          }
+        if (variationMoves.length > 0) {
+          // Step back in variation
+          handleUndoVariationMove();
         } else if (currentPly > 0) {
           onSelectPly(currentPly - 1);
         }
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         setIsPlaying(false);
-        if (isVariationActive) {
-          if (variationIndex < variationMoves.length) {
-            setVariationIndex((prev) => prev + 1);
-          }
-        } else if (currentPly < totalPlies) {
+        if (variationMoves.length === 0 && currentPly < totalPlies) {
           onSelectPly(currentPly + 1);
         }
-      } else if (e.key === ' ' && !isVariationActive) {
+      } else if (e.key === ' ') {
         e.preventDefault();
-        setIsPlaying((prev) => !prev);
-      } else if (e.key === 'Escape' && isVariationActive) {
-        e.preventDefault();
-        handleExitVariation();
+        if (!isCustomVariation) {
+          setIsPlaying((prev) => !prev);
+        }
+      } else if (e.key === 'Escape') {
+        // Deselect or exit variation
+        if (selectedSquare) {
+          setSelectedSquare(null);
+          setLegalMoves([]);
+        } else if (isCustomVariation) {
+          handleExitVariation();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isVariationActive, variationIndex, variationMoves.length, currentPly, totalPlies, onSelectPly, handleExitVariation]);
+  }, [currentPly, totalPlies, onSelectPly, variationMoves, isCustomVariation, selectedSquare]);
 
-  // Board arrows computation
+  // Calculate legal moves for a given square
+  const getLegalMovesForSquare = useCallback(
+    (sq: string): LegalMoveTarget[] => {
+      try {
+        const movesList = currentChess.moves({ square: sq as Square, verbose: true });
+        return movesList.map((m) => ({
+          to: m.to,
+          isCapture: Boolean(m.captured) || m.flags.includes('e') || m.flags.includes('c'),
+        }));
+      } catch {
+        return [];
+      }
+    },
+    [currentChess]
+  );
+
+  // Apply a played variation move
+  const handleExecuteVariationMove = useCallback((newMove: VariationMove) => {
+    setIsPlaying(false);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setVariationMoves((prev) => [...prev, newMove]);
+  }, []);
+
+  const handleExitVariation = useCallback(() => {
+    setVariationMoves([]);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setVariationEval(null);
+  }, []);
+
+  const handleUndoVariationMove = useCallback(() => {
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setVariationMoves((prev) => prev.slice(0, -1));
+  }, []);
+
+  // Handle clicking on a square or piece
+  const lastClickRef = useRef<{ time: number; square: string }>({ time: 0, square: '' });
+
+  const handleSquareAction = useCallback(
+    (square: string) => {
+      // 1. If a piece is already selected, and user clicks on a legal target square -> play the move!
+      if (selectedSquare && legalMoves.some((m) => m.to === square)) {
+        try {
+          const testChess = new Chess(displayFen);
+          const moveResult = testChess.move({
+            from: selectedSquare,
+            to: square,
+            promotion: 'q',
+          });
+
+          if (moveResult) {
+            handleExecuteVariationMove({
+              san: moveResult.san,
+              uci: `${moveResult.from}${moveResult.to}${moveResult.promotion || ''}`,
+              from: moveResult.from,
+              to: moveResult.to,
+              fenBefore: moveResult.before,
+              fenAfter: moveResult.after,
+              turn: moveResult.color,
+            });
+            return;
+          }
+        } catch {
+          // move failed
+        }
+      }
+
+      // 2. If user clicked the same square again -> deselect
+      if (selectedSquare === square) {
+        setSelectedSquare(null);
+        setLegalMoves([]);
+        return;
+      }
+
+      // 3. If user clicked a piece belonging to the side to move -> select it & show legal moves!
+      const piece = currentChess.get(square as Square);
+      if (piece && piece.color === currentChess.turn()) {
+        setSelectedSquare(square);
+        const targets = getLegalMovesForSquare(square);
+        setLegalMoves(targets);
+        return;
+      }
+
+      // 4. Any other click (empty non-legal square, or enemy piece not under capture) -> deselect
+      setSelectedSquare(null);
+      setLegalMoves([]);
+    },
+    [selectedSquare, legalMoves, displayFen, currentChess, getLegalMovesForSquare, handleExecuteVariationMove]
+  );
+
+  // Debounce click handlers to ensure piece click and square click don't fire twice
+  const handleSquareClick = useCallback(
+    ({ square }: { square: string }) => {
+      const now = Date.now();
+      if (now - lastClickRef.current.time < 50 && lastClickRef.current.square === square) {
+        return;
+      }
+      lastClickRef.current = { time: now, square };
+      handleSquareAction(square);
+    },
+    [handleSquareAction]
+  );
+
+  const handlePieceClick = useCallback(
+    ({ square }: { square: string | null }) => {
+      if (!square) return;
+      const now = Date.now();
+      if (now - lastClickRef.current.time < 50 && lastClickRef.current.square === square) {
+        return;
+      }
+      lastClickRef.current = { time: now, square };
+      handleSquareAction(square);
+    },
+    [handleSquareAction]
+  );
+
+  // Drag and drop handlers
+  const handleCanDragPiece = useCallback(
+    ({ piece }: { piece: { pieceType: string } }): boolean => {
+      const turn = currentChess.turn();
+      return piece.pieceType.startsWith(turn);
+    },
+    [currentChess]
+  );
+
+  const handlePieceDrag = useCallback(
+    ({ square }: { square: string | null }) => {
+      if (square) {
+        const piece = currentChess.get(square as Square);
+        if (piece && piece.color === currentChess.turn()) {
+          setSelectedSquare(square);
+          const targets = getLegalMovesForSquare(square);
+          setLegalMoves(targets);
+        }
+      }
+    },
+    [currentChess, getLegalMovesForSquare]
+  );
+
+  const handlePieceDrop = useCallback(
+    ({
+      sourceSquare,
+      targetSquare,
+    }: {
+      sourceSquare: string;
+      targetSquare: string | null;
+    }): boolean => {
+      if (!targetSquare) {
+        setSelectedSquare(null);
+        setLegalMoves([]);
+        return false;
+      }
+
+      try {
+        const testChess = new Chess(displayFen);
+        const moveResult = testChess.move({
+          from: sourceSquare,
+          to: targetSquare,
+          promotion: 'q',
+        });
+
+        if (moveResult) {
+          handleExecuteVariationMove({
+            san: moveResult.san,
+            uci: `${moveResult.from}${moveResult.to}${moveResult.promotion || ''}`,
+            from: moveResult.from,
+            to: moveResult.to,
+            fenBefore: moveResult.before,
+            fenAfter: moveResult.after,
+            turn: moveResult.color,
+          });
+          return true;
+        }
+      } catch {
+        // illegal move
+      }
+
+      setSelectedSquare(null);
+      setLegalMoves([]);
+      return false;
+    },
+    [displayFen, handleExecuteVariationMove]
+  );
+
+  // Map of legal destination squares
+  const legalMovesMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    legalMoves.forEach((m) => {
+      map.set(m.to, m.isCapture);
+    });
+    return map;
+  }, [legalMoves]);
+
+  // Last move played (in game or in variation)
+  const lastPlayedMove = useMemo(() => {
+    if (isCustomVariation) {
+      return variationMoves[variationMoves.length - 1];
+    }
+    return currentMove;
+  }, [isCustomVariation, variationMoves, currentMove]);
+
+  // Variation move sequence formatted as chess notation
+  const variationMovesText = useMemo(() => {
+    if (variationMoves.length === 0) return '';
+    const startFen = variationMoves[0].fenBefore;
+    const parts = startFen.split(' ');
+    let fullMoveNum = parseInt(parts[5], 10) || 1;
+
+    const tokens: string[] = [];
+    variationMoves.forEach((vm, idx) => {
+      if (idx === 0) {
+        if (vm.turn === 'w') {
+          tokens.push(`${fullMoveNum}. ${vm.san}`);
+        } else {
+          tokens.push(`${fullMoveNum}... ${vm.san}`);
+          fullMoveNum++;
+        }
+      } else {
+        if (vm.turn === 'w') {
+          tokens.push(`${fullMoveNum}. ${vm.san}`);
+        } else {
+          tokens.push(`${vm.san}`);
+          fullMoveNum++;
+        }
+      }
+    });
+
+    return tokens.join(' ');
+  }, [variationMoves]);
+
+  // Arrows logic
   const customArrows: Arrow[] = useMemo(() => {
     const arrows: Arrow[] = [];
 
-    // In Variation Mode:
-    if (isVariationActive) {
-      // 1. Played variation move arrow (Sky Blue)
-      if (variationIndex > 0 && variationMoves[variationIndex - 1]) {
-        const lastVar = variationMoves[variationIndex - 1];
+    // Helper to prevent duplicate arrows that would produce duplicate React keys
+    const dedupeArrows = (arr: Arrow[]): Arrow[] => {
+      const seen = new Set<string>();
+      const result: Arrow[] = [];
+      for (const a of arr) {
+        const key = `${a.startSquare}-${a.endSquare}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push(a);
+        }
+      }
+      return result;
+    };
+
+    // In custom variation: show last played move + engine best reply
+    if (isCustomVariation) {
+      const lastVarMove = variationMoves[variationMoves.length - 1];
+      if (lastVarMove?.from && lastVarMove?.to) {
         arrows.push({
-          startSquare: lastVar.from,
-          endSquare: lastVar.to,
-          color: 'rgba(56, 189, 248, 0.85)',
+          startSquare: lastVarMove.from,
+          endSquare: lastVarMove.to,
+          color: 'rgba(56, 189, 248, 0.75)', // Sky blue for user's variation move
         });
       }
-
-      // 2. Engine Best move arrow for current variation position (Emerald Green)
-      if (liveEval?.bestMove && liveEval.bestMove.length >= 4) {
-        arrows.push({
-          startSquare: liveEval.bestMove.slice(0, 2),
-          endSquare: liveEval.bestMove.slice(2, 4),
-          color: 'rgba(16, 185, 129, 0.92)',
-        });
+      // Only display engine reply once evaluation for current position is ready
+      if (
+        !variationEval?.isEvaluating &&
+        variationEval?.bestMoveUci &&
+        variationEval.bestMoveUci.length >= 4
+      ) {
+        const startSq = variationEval.bestMoveUci.slice(0, 2);
+        const endSq = variationEval.bestMoveUci.slice(2, 4);
+        if (startSq !== lastVarMove?.from || endSq !== lastVarMove?.to) {
+          arrows.push({
+            startSquare: startSq,
+            endSquare: endSq,
+            color: 'rgba(16, 185, 129, 0.92)', // Emerald green for engine response
+          });
+        }
       }
-
-      return arrows;
+      return dedupeArrows(arrows);
     }
 
-    // In Main Game Review Mode:
+    // At starting position (ply 0), show the engine's best opening move arrow
     if (!currentMove) {
       if (nextMove?.bestMoveUci && nextMove.bestMoveUci.length >= 4) {
         arrows.push({
@@ -375,14 +549,14 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
           color: 'rgba(16, 185, 129, 0.92)',
         });
       }
-      return arrows;
+      return dedupeArrows(arrows);
     }
 
     const bestUci = currentMove.bestMoveUci || currentMove.uci;
     const isBestPlayed =
       bestUci.length >= 4 && bestUci.slice(0, 4) === currentMove.uci.slice(0, 4);
 
-    // 1. Played move arrow
+    // 1. Played move arrow (if different from engine best move, use classification color)
     if (currentMove.from && currentMove.to && !isBestPlayed) {
       const meta = CLASSIFICATION_META[currentMove.classification];
       arrows.push({
@@ -392,35 +566,19 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
       });
     }
 
-    // 2. Engine Best Move arrow
+    // 2. Engine Best Move arrow (ALWAYS shown on every move in bright emerald green)
     if (bestUci && bestUci.length >= 4) {
       arrows.push({
         startSquare: bestUci.slice(0, 2),
         endSquare: bestUci.slice(2, 4),
-        color: 'rgba(16, 185, 129, 0.92)',
+        color: 'rgba(16, 185, 129, 0.92)', // Emerald green for top engine move
       });
     }
 
-    return arrows;
-  }, [isVariationActive, variationIndex, variationMoves, liveEval?.bestMove, currentMove, nextMove]);
+    return dedupeArrows(arrows);
+  }, [isCustomVariation, variationMoves, variationEval, currentMove, nextMove]);
 
-  // Selected piece & legal move dot styling
-  const squareStyles = useMemo(() => {
-    const styles: Record<string, React.CSSProperties> = {};
-    if (selectedSquare) {
-      styles[selectedSquare] = {
-        backgroundColor: 'rgba(234, 179, 8, 0.35)',
-      };
-    }
-    for (const sq of legalTargetSquares) {
-      styles[sq] = {
-        background: 'radial-gradient(circle, rgba(16, 185, 129, 0.5) 24%, transparent 26%)',
-      };
-    }
-    return styles;
-  }, [selectedSquare, legalTargetSquares]);
-
-  // Classification badges on the board
+  // Chessboard Square Renderer: handles legal move dots, capture rings, square selection, and badges
   const squareRenderer = useCallback(
     ({
       square,
@@ -429,14 +587,45 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
       square: string;
       children?: React.ReactNode;
     }) => {
-      const isTargetSquare = !isVariationActive && currentMove && currentMove.to === square;
+      const isSelected = selectedSquare === square;
+      const isLegal = legalMovesMap.has(square);
+      const isCapture = legalMovesMap.get(square) === true;
+      const isTargetSquare = currentMove && currentMove.to === square && !isCustomVariation;
+      const isLastMoveSquare =
+        lastPlayedMove && (lastPlayedMove.from === square || lastPlayedMove.to === square);
 
       return (
-        <div className="relative w-full h-full">
+        <div className="relative w-full h-full cursor-pointer">
+          {/* 1. Last move soft highlight */}
+          {isLastMoveSquare && !isSelected && (
+            <div className="absolute inset-0 bg-yellow-400/20 dark:bg-yellow-500/25 pointer-events-none z-[1]" />
+          )}
+
+          {/* 2. Selected square highlight (Chess.com style yellow-green) */}
+          {isSelected && (
+            <div className="absolute inset-0 bg-[#baca44]/55 pointer-events-none z-[2]" />
+          )}
+
+          {/* 3. Chess piece SVG */}
           {children}
 
-          {isTargetSquare && (
-            <div className="absolute top-1 right-1 z-20 pointer-events-none">
+          {/* 4. Chess.com style legal move: empty square centered dot */}
+          {isLegal && !isCapture && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+              <div className="w-[30%] h-[30%] max-w-[26px] max-h-[26px] rounded-full bg-slate-900/35 dark:bg-black/40 shadow-sm" />
+            </div>
+          )}
+
+          {/* 5. Chess.com style legal move: capture target ring */}
+          {isLegal && isCapture && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20 p-[2px] sm:p-[3.5px]">
+              <div className="w-full h-full rounded-full border-[5px] sm:border-[6px] border-slate-900/35 dark:border-black/40" />
+            </div>
+          )}
+
+          {/* 6. Game review classification badge (only on actual game moves) */}
+          {isTargetSquare && currentMove && (
+            <div className="absolute top-1 right-1 z-30 pointer-events-none">
               <span
                 className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-mono font-bold shadow-md"
                 style={{
@@ -452,75 +641,11 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
         </div>
       );
     },
-    [isVariationActive, currentMove]
+    [selectedSquare, legalMovesMap, currentMove, isCustomVariation, lastPlayedMove]
   );
 
   return (
     <div className={`flex flex-col items-center select-none ${className}`}>
-      {/* Variation Exploration Banner (when in variation mode) */}
-      {isVariationActive && (
-        <div className="w-full max-w-[500px] sm:max-w-[540px] mb-2 px-3 py-2 bg-gradient-to-r from-emerald-950/70 via-slate-900 to-slate-900/90 border border-emerald-500/30 rounded-xl shadow-lg flex flex-col gap-2 transition-all">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold min-w-0">
-              <GitBranch className="w-4 h-4 shrink-0 text-emerald-400 animate-pulse" />
-              <span className="truncate">{t('exploringVariation')}</span>
-              <span className="text-slate-400 font-normal font-mono text-[11px] shrink-0">
-                ({t('variationFromMove', { move: variationRootPly > 0 ? moves[variationRootPly - 1].moveNumber : 1 })})
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                onClick={() => setVariationIndex(0)}
-                className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/[0.08] transition-colors"
-                title={t('resetVariation')}
-              >
-                <RotateCcw className="w-3 h-3 inline mr-1" />
-                <span>{t('resetVariation')}</span>
-              </button>
-
-              <button
-                onClick={handleExitVariation}
-                className="px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-sm transition-colors flex items-center gap-1"
-              >
-                <X className="w-3.5 h-3.5" />
-                <span>{t('backToGame')}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Variation Move Breadcrumb Trail */}
-          <div className="flex items-center gap-1 flex-wrap text-xs font-mono overflow-x-auto py-0.5 border-t border-white/[0.06] pt-1.5">
-            <button
-              onClick={() => setVariationIndex(0)}
-              className={`px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-                variationIndex === 0
-                  ? 'bg-slate-700 text-white font-bold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              [Start]
-            </button>
-            {variationMoves.map((vm, idx) => {
-              const isActive = variationIndex === idx + 1;
-              return (
-                <button
-                  key={`var-${idx}-${vm.san}`}
-                  onClick={() => setVariationIndex(idx + 1)}
-                  className={`px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-                    isActive
-                      ? 'bg-emerald-500/25 text-emerald-300 font-bold border border-emerald-500/40 shadow-sm'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                  }`}
-                >
-                  {vm.san}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Board & Eval Bar Row */}
       <div className="flex items-stretch justify-center gap-2.5 w-full">
         {/* Vertical Eval Bar */}
@@ -537,14 +662,16 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
         >
           <Chessboard
             options={{
-              position: displayedFen,
+              position: displayFen,
               boardOrientation: orientation,
               arrows: customArrows,
               squareRenderer,
               allowDragging: true,
+              canDragPiece: handleCanDragPiece,
+              onPieceDrag: handlePieceDrag,
               onPieceDrop: handlePieceDrop,
               onSquareClick: handleSquareClick,
-              squareStyles,
+              onPieceClick: handlePieceClick,
               boardStyle: {
                 borderRadius: '12px',
               },
@@ -555,39 +682,50 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
         </div>
       </div>
 
-      {/* Engine Best Move Status Strip */}
-      <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2 px-3 py-1.5 bg-slate-900/90 border border-white/[0.08] rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs font-mono shadow-sm">
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <span className="text-slate-400 font-sans font-medium flex items-center gap-1.5">
-            <span
-              className={`w-2 h-2 rounded-full shrink-0 ${
-                isEvaluatingLive ? 'bg-amber-400 animate-spin' : 'bg-emerald-400 animate-pulse'
-              }`}
-            />
-            {t('engineBestLabel')}
-          </span>
+      {/* Custom Variation Control Bar (Active when exploring variations) */}
+      {isCustomVariation ? (
+        <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2 px-3 py-2 bg-gradient-to-r from-sky-950/90 via-slate-900/90 to-sky-950/90 border border-sky-500/30 rounded-xl flex items-center justify-between gap-2 shadow-lg backdrop-blur">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-sky-500/20 border border-sky-400/30 text-sky-300 text-[11px] font-semibold shrink-0">
+              <GitBranch className="w-3 h-3 text-sky-400" />
+              <span>{t('customVariation')}</span>
+            </span>
+            <span className="text-xs font-mono text-slate-200 truncate" dir="ltr">
+              {variationMovesText}
+            </span>
+          </div>
 
-          {isVariationActive ? (
-            /* Variation Engine Move & Play Button */
-            <div className="flex items-center gap-1.5">
-              <span className="text-emerald-400 font-bold bg-emerald-500/15 px-2 py-0.5 rounded border border-emerald-500/30 tracking-wide">
-                {variationBestSan || liveEval?.bestMove || (isEvaluatingLive ? t('engineCalculating') : '...')}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Undo last variation move */}
+            <button
+              onClick={handleUndoVariationMove}
+              title={t('undoVariationMove')}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs border border-white/[0.08] transition-colors"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('undoVariationMove')}</span>
+            </button>
+
+            {/* Exit variation and return to game */}
+            <button
+              onClick={handleExitVariation}
+              title={t('exitVariation')}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium shadow-sm transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>{t('exitVariation')}</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* Engine Best Move Status Strip (shown on every review ply) */
+        (currentMove || nextMove) && (
+          <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2 px-3 py-1.5 bg-slate-900/90 border border-white/[0.08] rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs font-mono shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-slate-400 font-sans font-medium flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                {locale === 'ar' ? 'أفضل نقلة للمحرك:' : 'Engine Best:'}
               </span>
-
-              {liveEval?.bestMove && (
-                <button
-                  onClick={() => handlePlayEngineMove(liveEval.bestMove)}
-                  title={t('playBestMove')}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-sans font-semibold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow transition-colors"
-                >
-                  <PlayCircle className="w-3 h-3" />
-                  <span>{t('playBestMove')}</span>
-                </button>
-              )}
-            </div>
-          ) : (
-            /* Main Game Engine Move */
-            <>
               <span className="text-emerald-400 font-bold bg-emerald-500/15 px-2 py-0.5 rounded border border-emerald-500/30 tracking-wide">
                 {currentMove
                   ? currentMove.bestMoveSan || currentMove.bestMoveUci || currentMove.san
@@ -600,8 +738,11 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                   </span>
                 ) : (
                   <span className="text-[10px] text-slate-400 font-sans">
-                    ({t('playedMoveLabel')}{' '}
-                    <span className="text-slate-200 font-mono font-semibold">{currentMove.san}</span>)
+                    ({locale === 'ar' ? 'لُعبت:' : 'Played:'}{' '}
+                    <span className="text-slate-200 font-mono font-semibold">
+                      {currentMove.san}
+                    </span>
+                    )
                   </span>
                 )
               )}
@@ -613,54 +754,67 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
                   </span>
                 </span>
               )}
-            </>
-          )}
-        </div>
+            </div>
+            <div className="text-slate-400 text-[11px] shrink-0">
+              {locale === 'ar' ? 'التقييم:' : 'Eval:'}{' '}
+              <span className="font-semibold text-slate-200">
+                {currentMove
+                  ? currentMove.isMateAfter
+                    ? currentMove.mateAfter && currentMove.mateAfter > 0
+                      ? `M${currentMove.mateAfter}`
+                      : `-M${Math.abs(currentMove.mateAfter || 1)}`
+                    : currentMove.evalAfter > 0
+                    ? `+${(currentMove.evalAfter / 100).toFixed(1)}`
+                    : (currentMove.evalAfter / 100).toFixed(1)
+                  : '+0.2'}
+              </span>
+            </div>
+          </div>
+        )
+      )}
 
-        {/* Eval Score Display */}
-        <div className="text-slate-400 text-[11px] shrink-0 font-mono">
-          {t('evalLabel')}{' '}
-          <span className="font-semibold text-slate-200">
-            {currentMate !== undefined
-              ? currentMate > 0
-                ? `M${currentMate}`
-                : `-M${Math.abs(currentMate)}`
-              : currentEvalCp > 0
-                ? `+${(currentEvalCp / 100).toFixed(1)}`
-                : (currentEvalCp / 100).toFixed(1)}
-          </span>
-        </div>
-      </div>
-
-      {/* MultiPV candidate moves chips (when in variation with alternative lines) */}
-      {isVariationActive && liveEval?.multiPVEvals && liveEval.multiPVEvals.length > 1 && (
-        <div className="w-full max-w-[500px] sm:max-w-[540px] mt-1.5 px-3 py-1 bg-slate-950/60 border border-white/[0.06] rounded-lg flex items-center gap-2 overflow-x-auto text-[11px] font-mono">
-          <span className="text-slate-500 font-sans text-[10px] shrink-0">{t('candidateLines')}:</span>
-          {liveEval.multiPVEvals.map((line, idx) => {
-            const scoreText = line.mate !== undefined
-              ? (line.mate > 0 ? `M${line.mate}` : `-M${Math.abs(line.mate)}`)
-              : line.scoreCp !== undefined
-                ? (line.scoreCp > 0 ? `+${(line.scoreCp / 100).toFixed(1)}` : (line.scoreCp / 100).toFixed(1))
-                : '';
-            return (
-              <button
-                key={`candidate-${line.pvIndex}-${line.bestMove}`}
-                onClick={() => handlePlayEngineMove(line.bestMove)}
-                className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/[0.08] transition-colors shrink-0 flex items-center gap-1"
-              >
-                <span className="text-slate-500 font-bold">{idx + 1}.</span>
-                <span className="text-emerald-400 font-semibold">{line.bestMove}</span>
-                {scoreText && <span className="text-slate-500 text-[10px]">({scoreText})</span>}
-              </button>
-            );
-          })}
+      {/* Real-time Engine evaluation strip when exploring custom variation */}
+      {isCustomVariation && (
+        <div className="w-full max-w-[500px] sm:max-w-[540px] mt-1.5 px-3 py-1.5 bg-slate-900/90 border border-sky-500/20 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs font-mono shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 font-sans font-medium flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              {locale === 'ar' ? 'الرد الأفضل للتفريعة:' : 'Variation Best Reply:'}
+            </span>
+            {variationEval?.isEvaluating ? (
+              <span className="inline-flex items-center gap-1 text-slate-400 font-sans text-[11px]">
+                <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
+                <span>{locale === 'ar' ? 'جاري التحليل...' : 'Analyzing...'}</span>
+              </span>
+            ) : variationEval?.bestMoveSan || variationEval?.bestMoveUci ? (
+              <span className="text-emerald-400 font-bold bg-emerald-500/15 px-2 py-0.5 rounded border border-emerald-500/30 tracking-wide">
+                {variationEval.bestMoveSan || variationEval.bestMoveUci}
+              </span>
+            ) : (
+              <span className="text-slate-500 text-[11px]">--</span>
+            )}
+          </div>
+          <div className="text-slate-400 text-[11px] shrink-0">
+            {locale === 'ar' ? 'تقييم التفريعة:' : 'Variation Eval:'}{' '}
+            <span className="font-semibold text-slate-200">
+              {variationEval?.mate
+                ? variationEval.mate > 0
+                  ? `M${variationEval.mate}`
+                  : `-M${Math.abs(variationEval.mate)}`
+                : variationEval
+                ? variationEval.scoreCp > 0
+                  ? `+${(variationEval.scoreCp / 100).toFixed(1)}`
+                  : (variationEval.scoreCp / 100).toFixed(1)
+                : '--'}
+            </span>
+          </div>
         </div>
       )}
 
-      {/* Board Navigation Controls Bar */}
+      {/* Board Controls Bar */}
       <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2.5 bg-slate-900/80 border border-white/[0.08] rounded-xl">
         <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5">
-          {/* Left: Orientation Flip */}
+          {/* Left: Orientation */}
           <div className="flex items-center gap-1">
             <button
               onClick={onToggleOrientation}
@@ -674,17 +828,13 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
           {/* Center: Stepping Controls */}
           <div className="flex items-center gap-0.5" dir="ltr">
-            {/* First */}
             <button
               onClick={() => {
                 setIsPlaying(false);
-                if (isVariationActive) {
-                  setVariationIndex(0);
-                } else {
-                  onSelectPly(0);
-                }
+                if (isCustomVariation) handleExitVariation();
+                onSelectPly(0);
               }}
-              disabled={isVariationActive ? variationIndex === 0 : currentPly === 0}
+              disabled={currentPly === 0 && !isCustomVariation}
               title={t('firstMove')}
               aria-label={t('firstMove')}
               className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
@@ -692,21 +842,16 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               <SkipBack className="w-3.5 h-3.5" />
             </button>
 
-            {/* Previous */}
             <button
               onClick={() => {
                 setIsPlaying(false);
-                if (isVariationActive) {
-                  if (variationIndex > 0) {
-                    setVariationIndex((prev) => prev - 1);
-                  } else {
-                    handleExitVariation();
-                  }
+                if (isCustomVariation) {
+                  handleUndoVariationMove();
                 } else if (currentPly > 0) {
                   onSelectPly(currentPly - 1);
                 }
               }}
-              disabled={!isVariationActive && currentPly === 0}
+              disabled={currentPly === 0 && !isCustomVariation}
               title={t('prevMove')}
               aria-label={t('prevMove')}
               className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
@@ -714,30 +859,26 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               <ChevronLeft className="w-4 h-4" />
             </button>
 
-            {/* Auto-Play Toggle (disabled in variation mode) */}
             <button
-              onClick={() => setIsPlaying((prev) => !prev)}
-              disabled={isVariationActive}
+              onClick={() => {
+                if (isCustomVariation) handleExitVariation();
+                setIsPlaying((prev) => !prev);
+              }}
+              disabled={isCustomVariation}
               title={isPlaying ? t('pause') : t('autoPlay')}
               aria-label={isPlaying ? t('pause') : t('autoPlay')}
-              className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/[0.06] transition-colors mx-1 disabled:opacity-25"
+              className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 border border-white/[0.06] transition-colors mx-1"
             >
               {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             </button>
 
-            {/* Next */}
             <button
               onClick={() => {
                 setIsPlaying(false);
-                if (isVariationActive) {
-                  if (variationIndex < variationMoves.length) {
-                    setVariationIndex((prev) => prev + 1);
-                  }
-                } else if (currentPly < totalPlies) {
-                  onSelectPly(currentPly + 1);
-                }
+                if (isCustomVariation) handleExitVariation();
+                if (currentPly < totalPlies) onSelectPly(currentPly + 1);
               }}
-              disabled={isVariationActive ? variationIndex === variationMoves.length : currentPly === totalPlies}
+              disabled={currentPly === totalPlies}
               title={t('nextMove')}
               aria-label={t('nextMove')}
               className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
@@ -745,17 +886,13 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               <ChevronRight className="w-4 h-4" />
             </button>
 
-            {/* Last */}
             <button
               onClick={() => {
                 setIsPlaying(false);
-                if (isVariationActive) {
-                  setVariationIndex(variationMoves.length);
-                } else {
-                  onSelectPly(totalPlies);
-                }
+                if (isCustomVariation) handleExitVariation();
+                onSelectPly(totalPlies);
               }}
-              disabled={isVariationActive ? variationIndex === variationMoves.length : currentPly === totalPlies}
+              disabled={currentPly === totalPlies}
               title={t('lastMove')}
               aria-label={t('lastMove')}
               className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-25 transition-colors"
@@ -766,15 +903,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
           {/* Right: Step Counter */}
           <div className="text-[11px] font-mono text-slate-400 px-1" dir="ltr">
-            {isVariationActive ? (
-              <span className="text-emerald-400 font-semibold">
-                Var: {variationIndex}/{variationMoves.length}
-              </span>
-            ) : (
-              <span>
-                {currentPly}/{totalPlies}
-              </span>
-            )}
+            {currentPly}/{totalPlies}
           </div>
         </div>
       </div>

@@ -29,6 +29,14 @@ export const metadata: Metadata = {
   title: 'RewindBoard — Chess Game Review | مراجعة مباريات الشطرنج',
   description:
     'Client-side Stockfish 19 game analysis. Accurate accuracy scores, move evaluations, and mistake trainer.',
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: 'any' },
+    ],
+    shortcut: '/favicon.svg',
+    apple: '/apple-touch-icon.png',
+  },
 };
 
 export default function RootLayout({
