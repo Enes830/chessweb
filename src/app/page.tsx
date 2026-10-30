@@ -92,11 +92,11 @@ export default function HomePage() {
       const evalResults = await client.evaluateGamePositions(
         fenList,
         16, // depth
-        3,  // MultiPV: compare the top three candidate moves
+        2,  // MultiPV: compare top two candidate moves for Best/Great/Brilliant
         (pct, cur) => {
           if (!analysisAbortedRef.current && analysisRun === analysisRunRef.current) {
             setAnalysisProgress(pct);
-            setCurrentPlyAnalyzing(cur);
+            setCurrentPlyAnalyzing(Math.min(cur, moveSteps.length));
           }
         }
       );

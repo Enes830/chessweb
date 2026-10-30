@@ -1,5 +1,7 @@
 import { Chess } from 'chess.js';
 import { EngineEvalResult } from '@/types/chess';
+import { cpToWinPct } from '@/lib/engine/classifier';
+import { lookupOpening } from '@/lib/openings';
 
 export interface EvalProgressCallback {
   (progressPct: number, currentPly: number, totalPlies: number): void;
@@ -13,6 +15,11 @@ interface QueuedTask {
   reject: (err: Error) => void;
   isLive?: boolean;
   onPartial?: (result: EngineEvalResult) => void;
+}
+
+function playerWinPct(evaluation: { scoreCp?: number; mate?: number }, sign: number): number {
+  if (evaluation.mate !== undefined) return evaluation.mate * sign > 0 ? 100 : 0;
+  return cpToWinPct((evaluation.scoreCp ?? 0) * sign);
 }
 
 export class StockfishWorkerClient {
@@ -35,9 +42,13 @@ export class StockfishWorkerClient {
     multiPVEvals: [],
   };
   private isTerminated: boolean = false;
-  private currentMultiPV: number = 3;
+  private currentMultiPV: number = 2;
+  private poolWorkers: StockfishWorkerClient[] = [];
 
-  constructor(private readonly timeouts = { ready: 30000, search: 120000, stop: 5000 }) {
+  constructor(
+    private readonly timeouts = { ready: 30000, search: 120000, stop: 5000 },
+    private readonly poolSize?: number
+  ) {
     if (typeof window !== 'undefined') {
       this.initWorker();
     }
@@ -64,8 +75,8 @@ export class StockfishWorkerClient {
       // Send initial UCI handshake
       this.send('uci');
       this.send('setoption name Threads value 1');
-      this.send('setoption name Hash value 32');
-      this.send('setoption name MultiPV value 3');
+      this.send('setoption name Hash value 64');
+      this.send('setoption name MultiPV value 2');
       this.send('isready');
     } catch (e) {
       this.fail(e instanceof Error ? e : new Error('Stockfish could not start'));
@@ -99,6 +110,7 @@ export class StockfishWorkerClient {
     this.draining = false;
     this.worker?.terminate();
     this.worker = null;
+    this.poolWorkers.splice(0).forEach(w => w.terminate());
   }
 
   public async waitReady(): Promise<void> {
@@ -111,6 +123,14 @@ export class StockfishWorkerClient {
       }
       this.send('isready');
     });
+  }
+
+  public async resetNewGame(): Promise<void> {
+    await this.waitReady();
+    if (this.unavailable) throw this.failure ?? new Error('Analysis terminated');
+    this.send('ucinewgame');
+    this.isReady = false;
+    await this.waitReady();
   }
 
   private handleUciLine(line: string) {
@@ -283,7 +303,7 @@ export class StockfishWorkerClient {
   public async evaluatePosition(
     fen: string,
     depth: number = 16,
-    multiPV: number = 3
+    multiPV: number = 2
   ): Promise<EngineEvalResult> {
     const generation = this.generation;
     await this.waitReady();
@@ -311,7 +331,7 @@ export class StockfishWorkerClient {
   public async evaluateLivePosition(
     fen: string,
     depth: number = 14,
-    multiPV: number = 3,
+    multiPV: number = 2,
     onPartial?: (result: EngineEvalResult) => void
   ): Promise<EngineEvalResult> {
     const generation = this.generation;
@@ -421,6 +441,7 @@ export class StockfishWorkerClient {
     this.readyResolvers.splice(0).forEach(waiter => waiter.reject(new Error('Evaluation cancelled')));
     this.taskQueue.splice(0).forEach(task => task.reject(new Error('Evaluation cancelled')));
     this.cancelCurrent();
+    this.poolWorkers.forEach(w => w.stopAndClearQueue());
   }
 
   public terminate() {
@@ -430,43 +451,250 @@ export class StockfishWorkerClient {
     this.fail(new Error('Analysis terminated'));
   }
 
+  private resolvePoolSize(totalPositions: number): number {
+    if (totalPositions < 4) return 1;
+    if (this.poolSize !== undefined) {
+      return Math.max(1, Math.min(this.poolSize, Math.floor(totalPositions / 2)));
+    }
+    if (
+      typeof window !== 'undefined' &&
+      typeof navigator !== 'undefined' &&
+      typeof navigator.hardwareConcurrency === 'number' &&
+      typeof Worker !== 'undefined' &&
+      !('instances' in Worker)
+    ) {
+      const cores = Math.min(4, Math.max(1, navigator.hardwareConcurrency));
+      return Math.max(1, Math.min(cores, Math.floor(totalPositions / 4)));
+    }
+    return 1;
+  }
+
+  private getActivePool(targetCount: number): StockfishWorkerClient[] {
+    this.poolWorkers = this.poolWorkers.filter(w => !w.unavailable);
+    const neededHelpers = Math.max(0, targetCount - 1);
+    while (this.poolWorkers.length < neededHelpers) {
+      this.poolWorkers.push(new StockfishWorkerClient(this.timeouts, 1));
+    }
+    return [this, ...this.poolWorkers.slice(0, neededHelpers)];
+  }
+
   /**
-   * Evaluates all positions in a game sequentially with live progress streaming
+   * Evaluates all positions in a game using:
+   * 1. A parallel Web Worker pool across CPU cores
+   * 2. Reverse-order contiguous chunking so ply i+1 warms the 64MB transposition table for ply i
+   * 3. Forced-move and terminal fast-paths (0ms derivation when only 1 legal move exists)
+   * 4. Smart MultiPV skipping on terminal/final/book/losing top-move positions
    */
   public async evaluateGamePositions(
     fens: string[],
-    depth: number = 14,
-    multiPV: number = 3,
+    depth: number = 16,
+    multiPV: number = 2,
     onProgress?: EvalProgressCallback
   ): Promise<EngineEvalResult[]> {
+    const total = fens.length;
+    if (total === 0) return [];
+
     const generation = this.generation;
     await this.waitReady();
     if (generation !== this.generation || this.unavailable) throw new Error('Evaluation cancelled');
-    // Reset the hash between games.
-    this.send('ucinewgame');
-    this.isReady = false;
-    await this.waitReady();
 
-    const results: EngineEvalResult[] = [];
-    const total = fens.length;
-
-    for (let i = 0; i < total; i++) {
-      if (this.unavailable || generation !== this.generation) {
-        throw new Error('Analysis terminated');
-      }
-
-      const fen = fens[i];
-      const result = await this.evaluatePosition(fen, depth, multiPV);
-      results.push(result);
-
-      if (onProgress) {
-        const pct = Math.round(((i + 1) / total) * 100);
-        onProgress(pct, i + 1, total);
-      }
+    // Pre-analyze position metadata once
+    interface PositionMeta {
+      turn: 'w' | 'b';
+      isTerminal: boolean;
+      legalMovesCount: number;
+      onlyMoveUci?: string;
+      playedUci?: string;
+      isBookNext: boolean;
     }
 
+    const meta: PositionMeta[] = new Array(total);
+    for (let i = 0; i < total; i++) {
+      let board: Chess;
+      try {
+        board = new Chess(fens[i]);
+      } catch {
+        throw new Error('Invalid analysis position');
+      }
+      const turn = board.turn();
+      const isTerminal = board.isGameOver();
+      if (isTerminal) {
+        meta[i] = {
+          turn,
+          isTerminal: true,
+          legalMovesCount: 0,
+          isBookNext: false,
+        };
+        continue;
+      }
+
+      const moves = board.moves({ verbose: true });
+      const nextFen = i + 1 < total ? fens[i + 1] : undefined;
+      const nextKey = nextFen ? nextFen.split(' ').slice(0, 4).join(' ') : undefined;
+      const playedMove = nextKey
+        ? moves.find(m => m.after.split(' ').slice(0, 4).join(' ') === nextKey)
+        : undefined;
+
+      meta[i] = {
+        turn,
+        isTerminal: false,
+        legalMovesCount: moves.length,
+        onlyMoveUci: moves.length === 1 ? moves[0].lan : undefined,
+        playedUci: playedMove?.lan,
+        isBookNext: Boolean(nextFen && i < 24 && lookupOpening(nextFen)),
+      };
+    }
+
+    const workers = this.getActivePool(this.resolvePoolSize(total));
+    await Promise.all(workers.map(w => w.resetNewGame()));
+    if (generation !== this.generation || this.unavailable) throw new Error('Evaluation cancelled');
+
+    const results: EngineEvalResult[] = new Array(total);
+    let completed = 0;
+    const reportProgress = () => {
+      completed++;
+      if (onProgress && generation === this.generation && !this.unavailable) {
+        const pct = Math.round((completed / total) * 100);
+        onProgress(pct, completed, total);
+      }
+    };
+
+    const workerCount = workers.length;
+    const chunkTasks = workers.map(async (worker, workerIdx) => {
+      const chunkStart = Math.floor((workerIdx * total) / workerCount);
+      const chunkEnd = Math.floor(((workerIdx + 1) * total) / workerCount);
+
+      // Evaluate backward (chunkEnd - 1 -> chunkStart) so fens[i + 1] populates the
+      // worker's transposition table at depth N before fens[i] is searched.
+      for (let i = chunkEnd - 1; i >= chunkStart; i--) {
+        if (this.unavailable || worker.unavailable || generation !== this.generation) {
+          throw new Error('Analysis terminated');
+        }
+
+        const posMeta = meta[i];
+        const sign = posMeta.turn === 'w' ? 1 : -1;
+
+        // 1. Terminal position fast-path
+        if (posMeta.isTerminal) {
+          results[i] = await worker.evaluatePosition(fens[i], depth, 1);
+          reportProgress();
+          continue;
+        }
+
+        // 2. Final game position: only ever used as evalAfterObj, never needs MultiPV > 1
+        if (i === total - 1) {
+          results[i] = await worker.evaluatePosition(fens[i], depth, 1);
+          reportProgress();
+          continue;
+        }
+
+        const afterRes = results[i + 1];
+
+        // 3. Forced move fast-path (only 1 legal move in position)
+        if (posMeta.legalMovesCount === 1 && posMeta.onlyMoveUci) {
+          if (
+            afterRes &&
+            posMeta.playedUci === posMeta.onlyMoveUci &&
+            (afterRes.mate === undefined || afterRes.depth === 0)
+          ) {
+            const onlyUci = posMeta.onlyMoveUci;
+            const derivedDepth = Math.max(1, afterRes.depth);
+            const pv = [onlyUci, ...(afterRes.pv || [])];
+            results[i] = {
+              depth: derivedDepth,
+              scoreCp: afterRes.scoreCp,
+              mate: afterRes.mate,
+              bestMove: onlyUci,
+              pv,
+              multiPVEvals: [
+                {
+                  depth: derivedDepth,
+                  pvIndex: 1,
+                  scoreCp: afterRes.scoreCp,
+                  mate: afterRes.mate,
+                  bestMove: onlyUci,
+                  pv,
+                },
+              ],
+            };
+          } else {
+            results[i] = await worker.evaluatePosition(fens[i], depth, 1);
+          }
+          reportProgress();
+          continue;
+        }
+
+        const targetMultiPV = Math.min(multiPV, posMeta.legalMovesCount);
+        if (targetMultiPV <= 1) {
+          results[i] = await worker.evaluatePosition(fens[i], depth, 1);
+          reportProgress();
+          continue;
+        }
+
+        // 4. Smart MultiPV: if the move enters a known book position or the position after
+        // the move is < 50% win chance for the moving player, a single-PV search suffices
+        // whenever the played move is already the top engine choice or loses no win%.
+        const rawAfter = afterRes
+          ? meta[i + 1]?.isTerminal
+            ? afterRes.mate !== undefined
+              ? 100
+              : 50
+            : playerWinPct(afterRes, sign)
+          : undefined;
+
+        const preferSinglePVFirst =
+          posMeta.isBookNext || (rawAfter !== undefined && rawAfter < 50);
+
+        if (preferSinglePVFirst && afterRes && rawAfter !== undefined) {
+          const res1 = await worker.evaluatePosition(fens[i], depth, 1);
+          if (this.unavailable || worker.unavailable || generation !== this.generation) {
+            throw new Error('Analysis terminated');
+          }
+          const winPctBefore = playerWinPct(res1, sign);
+          const sameMateStatus = Math.sign(res1.mate ?? 0) === Math.sign(afterRes.mate ?? 0);
+          const canCorrect = !meta[i + 1]?.isTerminal && sameMateStatus;
+          const isTopChoice = Boolean(posMeta.playedUci && res1.bestMove === posMeta.playedUci);
+          const effectiveAfter =
+            canCorrect && isTopChoice ? Math.max(winPctBefore, rawAfter) : rawAfter;
+          const noLoss = effectiveAfter >= winPctBefore;
+          const cannotBeBrilliantOrGreat = posMeta.isBookNext || effectiveAfter < 50;
+
+          if ((isTopChoice || noLoss) && cannotBeBrilliantOrGreat) {
+            results[i] = res1;
+            reportProgress();
+            continue;
+          }
+
+          // Otherwise run warm-TT MultiPV search to populate candidate lines
+          results[i] = await worker.evaluatePosition(fens[i], depth, targetMultiPV);
+          reportProgress();
+          continue;
+        }
+
+        results[i] = await worker.evaluatePosition(fens[i], depth, targetMultiPV);
+        reportProgress();
+      }
+    });
+
+    await Promise.all(workerTasksWithCleanup(chunkTasks, () => this.stopAndClearQueue()));
     return results;
   }
+}
+
+function workerTasksWithCleanup<T>(
+  tasks: Promise<T>[],
+  onError: () => void
+): Promise<T>[] {
+  let failed = false;
+  return tasks.map(p =>
+    p.catch(err => {
+      if (!failed) {
+        failed = true;
+        onError();
+      }
+      throw err;
+    })
+  );
 }
 
 // Singleton helper for browser usage

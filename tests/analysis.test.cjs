@@ -231,3 +231,91 @@ test('Opera Game queen sacrifice is Brilliant only when a winning alternative is
   before.multiPVEvals[0].mate = 3;
   assert.equal(classify(game.fen(), 'Qb8+', before, after).classification, 'best');
 });
+
+test('evaluateGamePositions evaluates reverse order, skips forced-move engine calls, and uses MultiPV 1 for book & final plies', async t => {
+  const { engine, worker } = client(t);
+  const forcedStart = '6k1/p7/8/8/8/8/6q1/7K w - - 0 1';
+  const b = new Chess(forcedStart);
+  assert.equal(b.moves().length, 1);
+  b.move('Kxg2');
+  const afterForced = b.fen();
+
+  const progressCalls = [];
+  const promise = engine.evaluateGamePositions(
+    [forcedStart, afterForced],
+    16,
+    2,
+    (pct, cur, total) => progressCalls.push({ pct, cur, total })
+  );
+
+  await tick();
+  worker.emit('readyok');
+  await tick();
+
+  const goCommands = worker.commands.filter(c => c.startsWith('go '));
+  assert.equal(goCommands.length, 1);
+  worker.emit('info depth 16 multipv 1 score cp 200 pv g8f7\nbestmove g8f7');
+  const results = await promise;
+
+  assert.equal(results.length, 2);
+  assert.equal(worker.commands.filter(c => c.startsWith('go ')).length, 1);
+  assert.equal(results[1].scoreCp, -200);
+  assert.equal(results[0].scoreCp, -200);
+  assert.equal(results[0].bestMove, 'h1g2');
+  assert.deepEqual(results[0].pv, ['h1g2', 'g8f7']);
+  assert.equal(progressCalls.length, 2);
+  assert.equal(progressCalls.at(-1).pct, 100);
+});
+
+test('evaluateGamePositions supports parallel worker pool and reverse-order chunking', async t => {
+  global.window = {};
+  global.Worker = FakeWorker;
+  const startIdx = FakeWorker.instances.length;
+  const engine = new StockfishWorkerClient({ ready: 200, search: 200, stop: 200 }, 2);
+  t.after(() => engine.terminate());
+
+  const { fenList } = buildGamePositions('1. e4 e5 2. Nf3 Nc6');
+  assert.equal(fenList.length, 5);
+
+  FakeWorker.instances[startIdx].emit('readyok');
+  const promise = engine.evaluateGamePositions(fenList, 16, 2);
+  await tick();
+
+  assert.equal(FakeWorker.instances.length - startIdx, 2);
+  const w0 = FakeWorker.instances[startIdx];
+  const w1 = FakeWorker.instances[startIdx + 1];
+
+  w1.emit('readyok');
+  await tick();
+  w0.emit('readyok');
+  w1.emit('readyok');
+  await tick();
+
+  const bestMoves = {
+    [fenList[0]]: 'e2e4',
+    [fenList[1]]: 'e7e5',
+    [fenList[2]]: 'g1f3',
+    [fenList[3]]: 'b8c6',
+    [fenList[4]]: 'f1b5',
+  };
+
+  for (let step = 0; step < 10; step++) {
+    await tick();
+    for (const w of [w0, w1]) {
+      const lastCmd = w.commands.at(-1) || '';
+      if (lastCmd.startsWith('go depth')) {
+        const posCmd = [...w.commands].reverse().find(c => c.startsWith('position fen '));
+        const fen = posCmd.replace('position fen ', '');
+        const bm = bestMoves[fen] || 'e2e4';
+        w.emit(`info depth 16 multipv 1 score cp 20 pv ${bm}\nbestmove ${bm}`);
+      }
+    }
+  }
+
+  const results = await promise;
+  assert.equal(results.length, 5);
+  const w0Positions = w0.commands.filter(c => c.startsWith('position fen ')).map(c => c.replace('position fen ', ''));
+  const w1Positions = w1.commands.filter(c => c.startsWith('position fen ')).map(c => c.replace('position fen ', ''));
+  assert.deepEqual(w0Positions, [fenList[1], fenList[0]]);
+  assert.deepEqual(w1Positions, [fenList[4], fenList[3], fenList[2]]);
+});

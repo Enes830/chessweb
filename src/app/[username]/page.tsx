@@ -220,11 +220,11 @@ export default function UserProfilePage({ params }: PageProps) {
       const evalResults = await client.evaluateGamePositions(
         fenList,
         16,
-        3,
+        2,
         (pct, cur) => {
           if (!analysisAbortedRef.current && analysisRun === analysisRunRef.current) {
             setAnalysisProgress(pct);
-            setCurrentPlyAnalyzing(cur);
+            setCurrentPlyAnalyzing(Math.min(cur, moveSteps.length));
           }
         }
       );
