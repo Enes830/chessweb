@@ -130,7 +130,17 @@ export function calculatePlayerAccuracy(moves: MoveAnalysis[], color: 'w' | 'b')
   if (playerMoves.length === 0) return 100;
 
   const total = playerMoves.reduce((acc, m) => {
-    const capsAcc = calculateMoveAccuracy(m.winPctLoss);
+    let capsAcc = calculateMoveAccuracy(m.winPctLoss);
+    // Severe penalty cap for tactical mistakes regardless of sigmoid flatness in lost/winning positions
+    if (m.classification === 'blunder') {
+      capsAcc = Math.min(capsAcc, 10);
+    } else if (m.classification === 'mistake') {
+      capsAcc = Math.min(capsAcc, 35);
+    } else if (m.classification === 'missed_win') {
+      capsAcc = Math.min(capsAcc, 40);
+    } else if (m.classification === 'inaccuracy') {
+      capsAcc = Math.min(capsAcc, 65);
+    }
     const weightAcc = (CLASSIFICATION_WEIGHTS[m.classification] ?? 0.7) * 100;
     return acc + (capsAcc * 0.7 + weightAcc * 0.3);
   }, 0);
@@ -139,9 +149,52 @@ export function calculatePlayerAccuracy(moves: MoveAnalysis[], color: 'w' | 'b')
 }
 
 /**
- * Estimates Elo performance from overall accuracy (quantized to nearest 50)
+ * Estimates Elo performance from overall accuracy and tactical error distribution
  */
-export function estimateEloFromAccuracy(accuracy: number): number {
+export function estimateEloFromAccuracy(
+  accuracy: number,
+  moves?: MoveAnalysis[],
+  color?: 'w' | 'b'
+): number {
+  if (moves && color) {
+    const playerMoves = moves.filter((m) => m.turn === color);
+    if (playerMoves.length > 0) {
+      const blunders = playerMoves.filter((m) => m.classification === 'blunder').length;
+      const mistakes = playerMoves.filter((m) => m.classification === 'mistake').length;
+      const inaccuracies = playerMoves.filter((m) => m.classification === 'inaccuracy').length;
+      const missedWins = playerMoves.filter((m) => m.classification === 'missed_win').length;
+      const greatBrilliant = playerMoves.filter(
+        (m) => m.classification === 'great' || m.classification === 'brilliant'
+      ).length;
+
+      let baseRating: number;
+      if (accuracy <= 50) {
+        baseRating = 400 + (accuracy / 50) * 350;
+      } else if (accuracy <= 75) {
+        baseRating = 750 + ((accuracy - 50) / 25) * 550;
+      } else if (accuracy <= 88) {
+        baseRating = 1300 + ((accuracy - 75) / 13) * 600;
+      } else if (accuracy <= 95) {
+        baseRating = 1900 + ((accuracy - 88) / 7) * 450;
+      } else {
+        baseRating = 2350 + ((accuracy - 95) / 5) * 450;
+      }
+
+      const penalty = blunders * 220 + mistakes * 110 + missedWins * 130 + inaccuracies * 40;
+      const bonus = greatBrilliant * 70;
+      let finalRating = baseRating - penalty + bonus;
+
+      if (blunders >= 2) {
+        finalRating = Math.min(finalRating, 1200);
+      } else if (blunders >= 1) {
+        finalRating = Math.min(finalRating, 1600);
+      }
+
+      const rounded = Math.round(finalRating / 25) * 25;
+      return Math.min(2900, Math.max(400, rounded));
+    }
+  }
+
   if (accuracy >= 98) return 2850;
   if (accuracy <= 40) return 400;
   const est = 350 + 26.5 * accuracy;
@@ -918,15 +971,22 @@ export function classifyMove({
     }
   }
 
-  // 7. WintrCat/freechess Won/Lost Position Clamping (analysis.ts lines 284-297)
-  // Do not allow blunder if move is still completely winning (>= +6.0)
+  // 7. Refined Position Clamping
+  // If player is still completely winning (>= +6.0) and didn't lose excessive evaluation, downgrade blunder
   if (classification === 'blunder' && effectivePlayerEvalAfter >= 600 && noMate) {
-    classification = 'good';
+    if (evalLoss < 150) {
+      classification = 'good';
+    } else if (evalLoss < 300) {
+      classification = 'inaccuracy';
+    } else {
+      classification = 'mistake';
+    }
   }
 
-  // Do not allow blunder if player was already in a completely lost position (<= -6.0)
-  if (classification === 'blunder' && playerEvalBefore <= -600 && noMate) {
-    classification = 'good';
+  // If player was already in a lost position (<= -6.0), DO NOT turn blunders into 'good'!
+  // A move is only softened to 'inaccuracy' if the evaluation loss was minor
+  if (classification === 'blunder' && playerEvalBefore <= -600 && noMate && evalLoss < 80) {
+    classification = 'inaccuracy';
   }
 
   const winPctLoss =

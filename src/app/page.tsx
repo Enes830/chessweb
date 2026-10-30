@@ -126,7 +126,7 @@ export default function HomePage() {
 
       const evalResults = await client.evaluateGamePositions(
         fenList,
-        14, // depth
+        16, // depth
         3,  // multiPV (top 3 candidate lines for accurate WintrCat/Brilliant-Chess classification)
         (pct, cur) => {
           if (!analysisAbortedRef.current) {
@@ -169,28 +169,30 @@ export default function HomePage() {
 
       // Find the deepest opening book match within the opening phase (ply <= 16)
       // All moves leading up to a recognized book position are theoretical book moves
-      let lastBookIndex = -1;
+      let inBookSequence = true;
       let deepestOpeningName: string | undefined;
       const stepOpenings: Array<string | undefined> = new Array(moveSteps.length);
+      const isBookMoveStep: boolean[] = new Array(moveSteps.length).fill(false);
 
       for (let i = 0; i < moveSteps.length; i++) {
         const match = lookupOpening(moveSteps[i].fenAfter);
         if (match) {
           stepOpenings[i] = match.name;
           deepestOpeningName = match.name;
-          if (moveSteps[i].ply <= 24) {
-            lastBookIndex = i;
+          if (inBookSequence && moveSteps[i].ply <= 20) {
+            isBookMoveStep[i] = true;
           }
+        } else {
+          inBookSequence = false;
         }
       }
 
-      // Carry forward / backfill opening names across the book sequence (0..lastBookIndex)
-      if (lastBookIndex >= 0) {
-        let currentName = stepOpenings[0] || deepestOpeningName;
-        for (let i = 0; i <= lastBookIndex; i++) {
+      if (deepestOpeningName) {
+        let currentName: string = stepOpenings[0] || deepestOpeningName!;
+        for (let i = 0; i < moveSteps.length; i++) {
           if (stepOpenings[i]) {
-            currentName = stepOpenings[i];
-          } else {
+            currentName = stepOpenings[i]!;
+          } else if (i <= 16) {
             stepOpenings[i] = currentName;
           }
         }
@@ -205,7 +207,6 @@ export default function HomePage() {
         const evalBeforeObj = evalResults[i];
         const evalAfterObj = evalResults[i + 1];
         const prevMoveAnalysis = i > 0 ? analyzedMoves[i - 1] : undefined;
-        const isBackfilledBook = i <= lastBookIndex;
 
         const classificationResult = classifyMove({
           ply: step.ply,
@@ -220,7 +221,7 @@ export default function HomePage() {
           evalBeforeObj,
           evalAfterObj,
           prevMoveAnalysis,
-          forceBook: isBackfilledBook,
+          forceBook: isBookMoveStep[i],
         });
 
         let bestUci =
@@ -284,8 +285,8 @@ export default function HomePage() {
 
       const whiteAccuracy = calculatePlayerAccuracy(analyzedMoves, 'w');
       const blackAccuracy = calculatePlayerAccuracy(analyzedMoves, 'b');
-      const whiteEstimatedElo = estimateEloFromAccuracy(whiteAccuracy);
-      const blackEstimatedElo = estimateEloFromAccuracy(blackAccuracy);
+      const whiteEstimatedElo = estimateEloFromAccuracy(whiteAccuracy, analyzedMoves, 'w');
+      const blackEstimatedElo = estimateEloFromAccuracy(blackAccuracy, analyzedMoves, 'b');
 
       const puzzles = extractPuzzlesFromAnalysis(analyzedMoves, meta);
       savePuzzlesToLocalStorage(puzzles);

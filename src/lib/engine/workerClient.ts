@@ -245,7 +245,7 @@ export class StockfishWorkerClient {
 
   public async evaluatePosition(
     fen: string,
-    depth: number = 14,
+    depth: number = 16,
     multiPV: number = 3
   ): Promise<EngineEvalResult> {
     await this.waitReady();
