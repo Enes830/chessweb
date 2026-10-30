@@ -11,6 +11,12 @@ import { EvalBar } from '@/components/EvalBar';
 import { useTranslation } from '@/lib/i18n/LanguageContext';
 import { getStockfishClient } from '@/lib/engine/workerClient';
 import {
+  playMoveSound,
+  playChessSound,
+  isSoundMuted,
+  setSoundMuted,
+} from '@/lib/sound';
+import {
   RotateCcw,
   SkipBack,
   ChevronLeft,
@@ -22,6 +28,8 @@ import {
   Undo2,
   ArrowLeft,
   Loader2,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 interface Arrow {
@@ -64,6 +72,22 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 }) => {
   const { t, locale } = useTranslation();
   const [isPlaying, setIsPlaying] = useState(false);
+  const [soundMuted, setSoundMutedState] = useState(false);
+
+  useEffect(() => {
+    setSoundMutedState(isSoundMuted());
+  }, []);
+
+  const handleToggleSound = useCallback(() => {
+    setSoundMutedState((prev) => {
+      const next = !prev;
+      setSoundMuted(next);
+      if (!next) {
+        playChessSound('move-self');
+      }
+      return next;
+    });
+  }, []);
 
   // Custom Variation state
   const [variationMoves, setVariationMoves] = useState<VariationMove[]>([]);
@@ -109,7 +133,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
     }
   }, [displayFen]);
 
-  // Reset custom variation whenever currentPly is changed from the outside (move list / controls)
+  // Reset custom variation and play wooden move sound whenever currentPly changes
   const prevPlyRef = useRef(currentPly);
   useEffect(() => {
     if (prevPlyRef.current !== currentPly) {
@@ -118,8 +142,14 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
       setSelectedSquare(null);
       setLegalMoves([]);
       setVariationEval(null);
+
+      if (currentPly > 0 && moves[currentPly - 1]) {
+        playMoveSound(moves[currentPly - 1]);
+      } else if (currentPly === 0) {
+        playChessSound('move-self');
+      }
     }
-  }, [currentPly]);
+  }, [currentPly, moves]);
 
   // Real-time Stockfish evaluation for custom variation moves
   useEffect(() => {
@@ -217,6 +247,29 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
     return () => clearInterval(timer);
   }, [isPlaying, isCustomVariation, currentPly, totalPlies, onSelectPly]);
 
+  // Apply a played variation move
+  const handleExecuteVariationMove = useCallback((newMove: VariationMove) => {
+    setIsPlaying(false);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setVariationMoves((prev) => [...prev, newMove]);
+    playMoveSound(newMove);
+  }, []);
+
+  const handleExitVariation = useCallback(() => {
+    setVariationMoves([]);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setVariationEval(null);
+  }, []);
+
+  const handleUndoVariationMove = useCallback(() => {
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setVariationMoves((prev) => prev.slice(0, -1));
+    playChessSound('move-self');
+  }, []);
+
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -261,7 +314,16 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentPly, totalPlies, onSelectPly, variationMoves, isCustomVariation, selectedSquare]);
+  }, [
+    currentPly,
+    totalPlies,
+    onSelectPly,
+    variationMoves,
+    isCustomVariation,
+    selectedSquare,
+    handleUndoVariationMove,
+    handleExitVariation,
+  ]);
 
   // Calculate legal moves for a given square
   const getLegalMovesForSquare = useCallback(
@@ -278,27 +340,6 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
     },
     [currentChess]
   );
-
-  // Apply a played variation move
-  const handleExecuteVariationMove = useCallback((newMove: VariationMove) => {
-    setIsPlaying(false);
-    setSelectedSquare(null);
-    setLegalMoves([]);
-    setVariationMoves((prev) => [...prev, newMove]);
-  }, []);
-
-  const handleExitVariation = useCallback(() => {
-    setVariationMoves([]);
-    setSelectedSquare(null);
-    setLegalMoves([]);
-    setVariationEval(null);
-  }, []);
-
-  const handleUndoVariationMove = useCallback(() => {
-    setSelectedSquare(null);
-    setLegalMoves([]);
-    setVariationMoves((prev) => prev.slice(0, -1));
-  }, []);
 
   // Handle clicking on a square or piece
   const lastClickRef = useRef<{ time: number; square: string }>({ time: 0, square: '' });
@@ -807,7 +848,7 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
       {/* Board Controls Bar */}
       <div className="w-full max-w-[500px] sm:max-w-[540px] mt-2.5 bg-slate-900/80 border border-white/[0.08] rounded-xl">
         <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5">
-          {/* Left: Orientation */}
+          {/* Left: Orientation & Sound Toggle */}
           <div className="flex items-center gap-1">
             <button
               onClick={onToggleOrientation}
@@ -816,6 +857,31 @@ export const ChessReviewBoard: React.FC<ChessReviewBoardProps> = ({
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              onClick={handleToggleSound}
+              title={
+                soundMuted
+                  ? locale === 'ar'
+                    ? 'تشغيل الصوت'
+                    : 'Unmute move sounds'
+                  : locale === 'ar'
+                  ? 'كتم الصوت'
+                  : 'Mute move sounds'
+              }
+              aria-label={soundMuted ? 'Unmute move sounds' : 'Mute move sounds'}
+              className={`p-1.5 rounded-lg transition-colors ${
+                soundMuted
+                  ? 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              {soundMuted ? (
+                <VolumeX className="w-3.5 h-3.5" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5" />
+              )}
             </button>
           </div>
 
