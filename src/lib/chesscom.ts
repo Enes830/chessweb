@@ -88,18 +88,22 @@ export async function fetchChessComUserGames(username: string): Promise<RecentGa
     return [];
   }
 
-  // Fetch the most recent month archive
-  const latestArchiveUrl = archives[archives.length - 1];
-  const gamesRes = await fetch(latestArchiveUrl, {
-    headers: { 'User-Agent': 'RewindBoard-Chess-Review (contact: support@rewindboard.com)' },
-  });
+  // A newly listed month can be empty. Walk backwards until the recent-game
+  // list is full, including older months when the latest has fewer than 20.
+  const games: ChessComGameRecord[] = [];
+  for (const archiveUrl of [...archives].sort().reverse()) {
+    const gamesRes = await fetch(archiveUrl, {
+      headers: { 'User-Agent': 'RewindBoard-Chess-Review (contact: support@rewindboard.com)' },
+    });
 
-  if (!gamesRes.ok) {
-    throw new Error(`Failed to fetch recent games archive.`);
+    if (!gamesRes.ok) {
+      throw new Error(`Failed to fetch recent games archive.`);
+    }
+
+    const gamesData = await gamesRes.json();
+    games.push(...(gamesData.games || []));
+    if (games.length >= 20) break;
   }
-
-  const gamesData = await gamesRes.json();
-  const games: ChessComGameRecord[] = gamesData.games || [];
 
   // Sort descending by end_time and take the latest 20 games
   const sortedGames = games.sort((a, b) => b.end_time - a.end_time).slice(0, 20);
