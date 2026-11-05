@@ -1,137 +1,192 @@
-# RewindBoard ♞
+<div align="center">
 
-**RewindBoard** is a zero-ad, 100% client-side Chess Game Review web application powered by **Stockfish 19 WebAssembly**. It provides Stockfish move review, independent classifications, Lichess-based accuracy, sacrifice detection, 7,982 exact opening positions, English/Arabic support, coaching, and Telegram puzzle exports. Its scoring is not Chess.com CAPS or a calibrated Elo estimate.
+<img src="public/apple-touch-icon.png" alt="RewindBoard knight logo" width="80" height="80" />
 
----
+# RewindBoard
 
-## ✨ Key Features
+### Every move has a lesson. Rewind yours.
 
-- **100% Client-Side Engine (`Stockfish 19 Lite WASM`)**:
-  - Runs `stockfish-19-lite-single.wasm` inside a dedicated browser Web Worker (`public/engine/stockfish.js` & `stockfish.wasm`).
-  - Zero server compute required for engine analysis and no restrictive `COOP`/`COEP` headers needed.
-  - Evaluates games with **MultiPV 3** at configurable depth (default depth 14) with same-root horizon correction.
-- **Unified Omnibox Game Importer**:
-  - **Chess.com Username**: Fetches public monthly archives and lists the 20 most recent games with win/loss badges, ratings, time controls, and 1-click analysis.
-  - **Chess.com & Lichess Game URLs**: Server-side proxy (`/api/fetch-game`) resolves live/daily Chess.com games and Lichess game IDs/URLs without CORS issues.
-  - **Raw PGN Tab**: Instant paste-and-analyze support with full PGN header parsing.
-  - **Featured Masterpieces**: Built-in presets (*Morphy's Opera Game*, *Kasparov's Immortal*, *Tactical Comeback*).
-- **Hybrid Move Classification Engine**:
-  - Uses documented expected-loss bands and legal hanging-piece analysis with Static Exchange Evaluation (`SEE`).
-  - **Brilliant (`!!`)**: Genuine material sacrifice verified via legal SEE (`exchangeGain`, `couldBeSaved`, `hasLastingOffer`) or unpinned hanging-piece viability where the move is top-tier and maintains a winning/equal position.
-  - **Great (`!`)**: Critical only-move that turns a losing position into equal/winning or holds a narrow tactical edge over MultiPV #2 ($\ge 150\text{cp}$ spread).
-  - **Best (`★`) / Excellent (`✓`) / Good**: Dynamic centipawn-loss thresholds scaled to previous evaluation magnitude.
-  - **Book (`📖`)**: $O(1)$ exact legal-position lookup across **7,982 positions** from CC0 ECO opening lines, including intermediate plies.
-  - **Inaccuracy (`?!`) / Mistake (`?`) / Blunder (`??`) / Missed Win (`❌`)**: Context-aware classification across centipawn and mate-transition states.
-- **Interactive Review Dashboard**:
-  - **Vertical Evaluation Bar**: Smooth win-percentage and mate-depth visualization.
-  - **Board Overlay & SVG Arrows**: Green best-move arrows, played-move arrows, and classification badges rendered directly on target squares.
-  - **Evaluation Graph**: Interactive Recharts area chart with color-coded blunder/brilliancy dots; click any point to jump to that ply.
-  - **Coach Banner & AI/Heuristic Explainer**: Bilingual (`EN` / `AR`) tactical explanations generated deterministically on the client with optional OpenAI `gpt-4o-mini` enrichment via `/api/explain`.
-- **Full English & Arabic (`RTL`) Localization**:
-  - Instant language toggle (`en` / `ar`) with full RTL layout mirroring and localized chess terminology.
-- **Companion Telegram Bot Sync**:
-  - Automatically extracts blunders, mistakes, missed wins, and brilliancies into the `RewindPuzzlePayload` schema (`localStorage` persistence up to 200 puzzles).
-  - Deep-links directly to the companion Telegram Bot (`https://t.me/RewindChessBot?start=...`) or dispatches JSON payloads to a configured webhook.
+Free chess game review powered by Stockfish 19, right in your browser.<br />
+Import a game, uncover turning points, and explore what you could have played.
 
----
+**No account required · Local engine analysis · English & العربية**
 
-## 🚀 Getting Started
+[![CI](https://github.com/Enes830/chessweb/actions/workflows/ci.yml/badge.svg)](https://github.com/Enes830/chessweb/actions/workflows/ci.yml)
+![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?logo=typescript&logoColor=white)
+![Stockfish 19](https://img.shields.io/badge/Stockfish-19-10B981)
 
-### Prerequisites
+[Get started](#quick-start) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Contribute](#contributing)
 
-- **Node.js**: 18.18+ (tested on Node 20 / 22)
-- **Package Manager**: `npm` or `pnpm`
+</div>
 
-### Installation
+![RewindBoard review dashboard with a chessboard, engine recommendations, and move classifications](docs/images/game-review.png)
+
+## Why RewindBoard?
+
+Your post-game review should help you understand your decisions—not just tell you that you blundered. RewindBoard combines a local chess engine with move-by-move feedback, alternative lines, and explanations so you can turn a finished game into your next lesson.
+
+The engine runs on your device in Web Workers. You do not need an account or an API key for core game review, and there is no hosted engine service to configure.
+
+## Features
+
+| | What you can do |
+| --- | --- |
+| **Bring your own games** | Look up a Chess.com username, import a Chess.com or Lichess game URL, paste PGN, or try a built-in classic. |
+| **Review with Stockfish 19** | Analyze games at depth 16 with up to two candidate lines and a pool of up to four browser workers. |
+| **Find the turning points** | See Brilliant, Great, Best, Excellent, Good, Book, Inaccuracy, Mistake, Blunder, and Missed Win labels. |
+| **Understand the position** | Follow engine arrows, the evaluation bar, a clickable evaluation graph, and coaching explanations. |
+| **Ask “what if?”** | Play alternative moves on the board and get live engine feedback without changing the original game. |
+| **Recognize opening theory** | Identify exact legal positions from a catalog of 7,982 opening positions. |
+| **Review in your language** | Switch between English and Arabic with right-to-left layout support. |
+| **Practice your mistakes** | Export tactical positions as JSON or send them to a configured Telegram integration. |
+
+## Screenshots
+
+Real screenshots of the app running locally with the built-in **Morphy Opera Game**—no account or private game data needed.
+
+### Import a game
+
+Start with a username, a game link, or your PGN. The built-in library lets you try a review immediately.
+
+![RewindBoard import screen with username search, PGN import, and a game library](docs/images/import-game.png)
+
+### Explore a review
+
+Step through the game, compare your move with the engine recommendation, and inspect accuracy and move classifications.
+
+![Morphy's Opera Game analyzed in RewindBoard with accuracy and move classification summaries](docs/images/game-review.png)
+
+### Learn in Arabic
+
+The same review workflow, with Arabic translations and a right-to-left interface.
+
+![RewindBoard game review in Arabic with right-to-left layout](docs/images/arabic-review.png)
+
+## Quick start
+
+### Requirements
+
+- **Node.js 20.9 or newer** and npm.
+- A modern browser with WebAssembly and Web Worker support.
 
 ```bash
-git clone <repo-url> rewindboard
-cd rewindboard
+git clone https://github.com/Enes830/chessweb.git
+cd chessweb
 npm install
-```
-
-> The `postinstall` script (`scripts/copy-stockfish.mjs`) automatically copies `stockfish-19-lite-single.js` and `stockfish-19-lite-single.wasm` from `node_modules/stockfish/bin/` into `public/engine/`.
-
-### Environment Variables (Optional)
-
-Create a `.env.local` file in the project root if you want optional AI explanations or custom Telegram Bot targets:
-
-```env
-# Optional: Enables GPT-4o-mini move explanations in /api/explain (falls back to local heuristic if omitted)
-OPENAI_API_KEY=sk-...
-
-# Optional: Custom Telegram Bot username & webhook for puzzle export
-NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=RewindChessBot
-NEXT_PUBLIC_BOT_WEBHOOK_URL=https://your-bot-webhook.example.com/api/puzzles
-```
-
-### Development
-
-```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open **http://localhost:3000**, select **Library Games**, and try **Morphy's Opera Game** for a first review. You can also paste a PGN or search for a Chess.com username.
 
-### Production Build
+Installation automatically copies the Stockfish JavaScript and WASM files into `public/engine/`. Do not edit those generated engine assets by hand.
+
+### Optional configuration
+
+Core analysis works without environment variables. To configure coaching or Telegram exports:
+
+```bash
+cp .env.example .env.local
+```
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` | Enables optional server-side AI coaching. Without it, explanations fall back to local heuristics. Keep this key on the server. |
+| `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | Telegram bot target; defaults to `RewindChessBot`. |
+| `NEXT_PUBLIC_BOT_WEBHOOK_URL` | Optional endpoint for sending puzzle exports. |
+
+Variables prefixed with `NEXT_PUBLIC_` are visible to the browser: never put secrets in them. The companion Telegram bot is a separate integration, not a bot server included in this repository.
+
+### Production
 
 ```bash
 npm run build
-npm run start
+npm start
 ```
 
----
+Use a Next.js-compatible host with a Node.js runtime for the game-import and optional coaching API routes. The production build also copies the Stockfish assets. Serve `public/engine/stockfish.wasm` as `application/wasm`; the included Next.js configuration already sets this header.
 
-## Analysis methodology
-
-See [docs/analysis-methodology.md](docs/analysis-methodology.md) for formulas,
-classification thresholds, engine behavior, sources and known limits.
-
-Run `npm test` for deterministic analysis regressions and `npx tsc --noEmit`
-for strict TypeScript validation. Refresh the CC0 opening database with
-`node scripts/update-openings.mjs` (requires network access).
-
----
-
-## 🗂️ Project Structure
+## How it works
 
 ```text
-├── public/engine/               # Stockfish 19 Lite single-threaded WASM & JS worker
-├── scripts/copy-stockfish.mjs   # Postinstall/build asset copier for Stockfish WASM
-└── src/
-    ├── app/
-    │   ├── api/explain/         # Optional OpenAI GPT-4o-mini coach route
-    │   ├── api/fetch-game/      # Server-side Chess.com & Lichess game resolver
-    │   ├── layout.tsx           # Root layout & LanguageProvider wrapper
-    │   └── page.tsx             # Main application state machine (import -> analyzing -> reviewed)
-    ├── components/
-    │   ├── ChessReviewBoard.tsx # Interactive chessboard, SVG move arrows & classification badges
-    │   ├── CoachBanner.tsx      # Coach avatar, classification header & move explanation card
-    │   ├── EvalBar.tsx          # Animated vertical evaluation bar
-    │   ├── EvalGraph.tsx        # Recharts win-probability / centipawn area graph
-    │   ├── GameImporter.tsx     # Omnibox importer (Chess.com user/URL, Lichess URL, PGN, Presets)
-    │   ├── MoveList.tsx         # Two-column ply navigation table with symbols
-    │   ├── ReviewSummary.tsx    # Accuracy cards & classification counts
-    │   └── TelegramBridgeModal.tsx # Puzzle preview, JSON copy, webhook & Telegram deep link
-    ├── lib/
-    │   ├── bridge/telegramExport.ts # Puzzle extraction, localStorage & Telegram encoding
-    │   ├── engine/
-    │   │   ├── classifier.ts    # Expected-loss classifier, SEE & accuracy math
-    │   │   └── workerClient.ts  # UCI Web Worker queue, MultiPV parser & perspective normalizer
-    │   ├── i18n/                # Bilingual English/Arabic translations & LanguageContext
-    │   ├── chesscom.ts          # Chess.com PubAPI fetcher, URL parsers & preset PGNs
-    │   ├── coachExplainer.ts    # Deterministic bilingual tactical heuristics + API client
-    │   ├── openings.ts          # O(1) FEN opening book builder & lookup
-    │   └── openingsData.json    # 7,982 exact legal opening positions
-    └── types/chess.ts           # Core TypeScript interfaces
+Import game → Replay PGN → Evaluate positions → Classify moves → Explore & practice
+                chess.js     Stockfish WASM      Local scoring    Review dashboard
 ```
 
----
+1. **Replay:** `chess.js` validates the game and produces the board position before and after each move.
+2. **Evaluate:** Stockfish runs in browser Web Workers. Game review uses depth 16; live variation exploration uses depth 14. Terminal positions are handled without an engine search.
+3. **Explain:** Local classification uses expected-score loss, exact opening matches, and sacrifice detection. Coaching adds a short explanation of the decision.
+4. **Explore:** Navigate the move list or graph, test alternatives, and export useful training positions.
 
-## 🛠️ Tech Stack
+### Transparent scoring, not a platform clone
 
-- **Framework**: Next.js 16 (App Router), React 19, TypeScript 5.9
-- **Styling**: Tailwind CSS 3.4, Lucide React
-- **Chess Engine**: Stockfish 19 WebAssembly (`stockfish` npm package, single-threaded lite worker)
-- **Chess Logic & Board**: `chess.js` (v1.4), `react-chessboard` (v5.12)
-- **Visualizations**: Recharts 3.10
+Accuracy uses Lichess-based formulas. Move classifications use an independent implementation of documented loss bands and tactical checks. They are **not Chess.com CAPS scores**, an exact reproduction of another platform's review, or a calibrated performance Elo estimate. Results depend on search depth and engine behavior.
+
+Read the [analysis methodology](docs/analysis-methodology.md) for formulas, classification thresholds, and engine details.
+
+### What stays local?
+
+- **Engine search and move classification** run on your device. Pasting PGN does not require uploading the game to a hosted chess engine.
+- **Online game imports** contact Chess.com or Lichess; URL resolution uses the app's `/api/fetch-game` route.
+- **Optional AI coaching**, when configured, sends position and move context through the server to the AI provider.
+- **Puzzle exports** are stored in browser `localStorage` (up to 200 items). Sending them through Telegram or a webhook shares them with that destination.
+- The app includes **Vercel Analytics**. Local engine analysis does not mean the entire app is network-free or telemetry-free.
+
+## Development
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development server. |
+| `npm test` | Run deterministic regression tests. |
+| `npx tsc --noEmit` | Run strict TypeScript validation. |
+| `npm run lint` | Run the current lint script, which is a TypeScript check. |
+| `npm run build` | Copy engine assets and create a production build. |
+| `npm start` | Serve the production build. |
+| `node scripts/update-openings.mjs` | Refresh the opening catalog; requires network access. |
+
+### Project map
+
+```text
+src/
+├── app/
+│   ├── page.tsx                 Import → analysis → review workflow
+│   └── api/                     Game resolution and optional AI coaching
+├── components/                  Chessboard, importer, coach, graph, and summaries
+├── lib/
+│   ├── engine/                  Stockfish workers and move classification
+│   ├── i18n/                    English / Arabic translations and language context
+│   ├── bridge/                  Telegram links and puzzle exports
+│   ├── coachExplainer.ts        Local explanations and optional API fallback
+│   └── openings.ts              Exact-position opening lookup
+└── types/                       Shared chess and puzzle types
+tests/                           Analysis regression tests
+scripts/                         Engine setup and opening-data maintenance
+docs/                            Analysis methodology and README screenshots
+```
+
+## Contributing
+
+Bug reports, clearer explanations, accessibility improvements, and analysis regressions are welcome.
+
+1. Open an issue describing the problem or proposed change. For analysis bugs, include a PGN or FEN, the move in question, and what you expected.
+2. Fork the repository and keep your changes focused.
+3. Run `npm test`, `npx tsc --noEmit`, and `npm run build` before opening a pull request.
+4. Describe what changed and include screenshots for UI work.
+
+Please read [AGENTS.md](AGENTS.md) for architecture and project conventions. Add new UI strings to **both English and Arabic** dictionaries, preserve RTL behavior, and keep engine evaluations normalized to White's perspective.
+
+## Acknowledgments
+
+- **Stockfish** supplies the WebAssembly chess engine.
+- **chess.js** handles chess rules, PGN replay, and position validation.
+- **react-chessboard** provides the interactive board; **Recharts** powers the evaluation graph.
+- **lichess-org/chess-openings** supplies the CC0 source data for the opening catalog.
+- **Lichess** provides the public accuracy formulas used by the scoring pipeline.
+- **Brilliant-Chess** and **WintrCat/freechess** informed the sacrifice-detection implementation.
+
+RewindBoard is an independent project and is not affiliated with Chess.com, Lichess, or the Stockfish team.
+
+## License status
+
+A project-wide license has not yet been added. The maintainer should select and publish one before presenting this repository as a licensed open-source release. Third-party code, engine binaries, and data retain their respective licenses; a public repository does not replace those terms.
